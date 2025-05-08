@@ -3,7 +3,7 @@
 //|                                                                  |
 //|                                                                  |
 //+------------------------------------------------------------------+
-#property copyright "Your Name"
+#property copyright "Robert"
 #property version   "1.10"
 #property strict
 
@@ -13,7 +13,7 @@ input double               ATR_Multiplier = 2.0;    // ATR Multiplier for Supert
 input ENUM_TIMEFRAMES      TimeFrame = PERIOD_M5;   // Timeframe
 
 // Input parameters for volatility filters
-input double               ATR_Threshold = 0.0003;  // Minimum ATR value to trade
+input double               ATR_Threshold = 0.03;  // Minimum ATR value to trade
 input int                  ADX_Period = 14;         // ADX Period
 input double               ADX_Threshold = 25.0;    // Minimum ADX value to trade (increased)
 input bool                 UseRSIFilter = true;     // Use RSI filter (enabled by default)
@@ -186,12 +186,11 @@ void OnTick()
 bool IsLowVolatility()
 {
     // Check ATR threshold
-    if(atrBuffer[0] < ATR_Threshold)
+    if(atrBuffer[0] < ATR_Threshold / iClose(_Symbol, TimeFrame, 0))
     {
-        Print("ATR below threshold: ", atrBuffer[0], " < ", ATR_Threshold);
+        Print("ATR below threshold: ", atrBuffer[0], " < ", ATR_Threshold / iClose(_Symbol, TimeFrame, 0));
         return true;
     }
-    
     // Check ADX threshold
     if(adxBuffer[0] < ADX_Threshold)
     {
