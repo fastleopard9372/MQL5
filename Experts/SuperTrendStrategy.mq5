@@ -271,6 +271,7 @@ void OpenSell()
     request.magic = 123456;
     request.comment = "Supertrend EA Sell";
     
+    
     if(OrderSend(request, result))
     {
         posTicket = result.order;
