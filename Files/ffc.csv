@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="UTF-8">
+	<meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+	<meta name="viewport" content="width=device-width">
+	<title>Rate Limited</title>
+	<style>
+		html {
+			height: 100%;
+			overflow-y: scroll;
+			font-family: Verdana, Helvetica, sans-serif;
+			font-size: 100%;
+			-webkit-text-size-adjust: 100%;
+			padding: 0;
+			margin: 0;
+		}
+
+		body {
+			width: 100%;
+			height: 100%;
+			background-color: #2c3644;
+			margin: 0;
+			font-size: .7em;
+			line-height: 1.4;
+		}
+
+		.site {
+			min-width: 987px;
+			max-width: 1269px;
+			margin: 0 auto;
+			height: 100%;
+			padding-top: 0;
+		}
+
+		.site__inner {
+			height: 100%;
+			padding-top: 0;
+			background-color: #e6e8ed;
+			margin: 0;
+			overflow: visible;
+			box-shadow: 0 0 20px rgba(0, 0, 0, .5);
+		}
+
+		.site__content {
+			height: 100%;
+			padding-top: 0;
+			display: flex;
+			flex-direction: row;
+		}
+
+		section.content {
+			margin: 15px 15px 0;
+			flex-grow: 2;
+		}
+
+		.flexBox {
+			background-color: #f4f6f9;
+			display: block;
+			font-size: 1em;
+			box-shadow: 0 1px 3px rgba(0, 0, 0, .12), 0 1px 2px rgba(0, 0, 0, .24);
+			margin: 189px auto;
+			width: 710px;
+		}
+
+		.flexBox .head {
+			min-height: 8px;
+			border-bottom: 1px solid #384b6f;
+			background: #37548a;
+			background: linear-gradient(to top, #304978, #37548a);
+		}
+
+		.flexBox .head li {
+			display: block;
+			border-bottom: none !important;
+			color: #dde4ec;
+			line-height: 23px;
+			height: 23px;
+			padding-left: 9px !important;
+		}
+
+		.flexBox .head ul {
+			margin: 0;
+			padding: 0;
+			list-style: none;
+			overflow: hidden;
+		}
+
+		.error__body {
+			margin: 0;
+			padding: 0;
+			list-style: none;
+		}
+
+		.error__body > li {
+			padding: 30px 10px;
+			font-size: 1.1em;
+		}
+	</style>
+</head>
+<body>
+
+<div id="ui-outer" class="site">
+	<div id="ui-inner" class="site__inner">
+		<div id="content" class="site__content">
+			<section class="content">
+				<div class="flexBox error">
+					<div class="head">
+						<ul>
+							<li class="left noborder nolink"><strong>Request Denied</strong></li>
+						</ul>
+					</div>
+					<ul class="error__body">
+						<li>
+							You've exceeded the limit for Calendar Export requests. Please wait five minutes before trying again.
+							<br><br>
+
+							<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" fill="none" viewBox="0 0 10 10"><path fill="url(#a)" d="M5 9.689A4.689 4.689 0 1 0 5 .31a4.689 4.689 0 0 0 0 9.38"/><path fill="#62507D" d="M5 10c-2.757 0-5-2.243-5-5s2.243-5 5-5 5 2.243 5 5-2.243 5-5 5M5 .622A4.38 4.38 0 0 0 .622 5 4.38 4.38 0 0 0 5 9.378 4.38 4.38 0 0 0 9.378 5 4.38 4.38 0 0 0 5 .622"/><path fill="#62507D" d="M5 4.015A.988.988 0 1 0 5 2.04a.988.988 0 0 0 0 1.976m.988 1.831a.988.988 0 1 0-1.976 0v1.127a.988.988 0 0 0 1.976 0z"/><defs><linearGradient id="a" x1="1.789" x2="7.848" y1=".598" y2="8.903" gradientUnits="userSpaceOnUse"><stop offset=".096" stop-color="#F4F9FF"/><stop offset=".235" stop-color="#EDF2F9"/><stop offset=".433" stop-color="#DDDFEB"/><stop offset=".667" stop-color="#C1C0D4"/><stop offset=".927" stop-color="#9B95B4"/><stop offset="1" stop-color="#8F88AA"/></linearGradient></defs></svg>
+							The Calendar export file is only updated once per hour.  Requesting it more than that is unnecessary and can result in being blocked.
+						</li>
+					</ul>
+				</div>
+			</section>
+		</div>
+	</div>
+</div>
+
+</body>
+</html>
