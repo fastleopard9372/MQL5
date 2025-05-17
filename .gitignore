@@ -1,0 +1,12 @@
+*
+!.gitignore
+!Include/
+!Include/Custom
+!Include/Custom/ChartIndicators.mqh
+!Include/Custom/indicatorChart.mqh
+!Include/Custom/indicators.mqh
+!Include/Custom/RiskManager.mqh
+!Include/Custom/SignalAnalyzer.mqh
+!Include/Custom/TradeManager.mqh
+!Experts/
+!Experts/TrendReversalEA.mq5
