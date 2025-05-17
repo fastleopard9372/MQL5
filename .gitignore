@@ -1,7 +1,7 @@
 *
 !.gitignore
 !Include/
-!Include/Custom/
-!Include/Custom/**
+!Include/TrendReversal/
+!Include/TrendReversal/**
 !Experts/
 !Experts/TrendReversalEA.mq5
