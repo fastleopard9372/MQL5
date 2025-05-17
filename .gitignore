@@ -1,0 +1,8 @@
+# Ignore all files by default
+*
+
+# Allow specific files and folders
+!Experts/
+!Experts/TrendReversalEA.mq5
+!Include/
+!Include/TrendReversal/
