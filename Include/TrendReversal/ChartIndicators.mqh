@@ -223,4 +223,4 @@ bool CChartIndicators::SetIndicatorStyle(string name, int line, color clr, int s
     // For MT5, indicator styling is usually done through the indicator properties
     // or via ObjectSet functions for custom graphics
     return true;
-}
+}   

@@ -15,7 +15,7 @@ struct SPositionInfo
     double   volume;
     string   comment;
     ENUM_POSITION_TYPE type;
-};
+};  
 
 //--- Trade result structure
 struct STradeResult
