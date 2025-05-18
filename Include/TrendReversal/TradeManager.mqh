@@ -1,8 +1,3 @@
-//+------------------------------------------------------------------+
-//|                                         TradeManager.mqh        |
-//|                        Copyright 2025, MetaQuotes Software Corp. |
-//|                                             https://www.mql5.com |
-//+------------------------------------------------------------------+
 #property copyright "Copyright 2025, MetaQuotes Software Corp."
 #property link      "https://www.mql5.com"
 
@@ -22,6 +17,15 @@ struct SPositionInfo
     ENUM_POSITION_TYPE type;
 };
 
+//--- Trade result structure
+struct STradeResult
+{
+    ulong    ticket;
+    ENUM_POSITION_TYPE type;
+    double   profit;
+    datetime close_time;
+};
+
 //+------------------------------------------------------------------+
 //| Trade manager class for handling position management             |
 //+------------------------------------------------------------------+
@@ -37,12 +41,22 @@ private:
     SPositionInfo m_buy_positions[];
     SPositionInfo m_sell_positions[];
     
+    // Track last trades and consecutive losses
+    STradeResult m_last_trades[10];        // Store last 10 trades
+    int      m_last_trade_index;           // Current index in circular buffer
+    int      m_consecutive_buy_losses;     // Count of consecutive buy losses
+    int      m_consecutive_sell_losses;    // Count of consecutive sell losses
+    bool     m_block_buy_trades;           // Flag to block buy trades
+    bool     m_block_sell_trades;          // Flag to block sell trades
+    
     // Private helper methods
     bool     UpdatePositionInfo(SPositionInfo &pos);
     bool     ClosePosition(ulong ticket);
     int      CountCandlesSinceOpen(datetime open_time);
     bool     IsPositionExists(ulong ticket);
     void     LogPositionInfo(const SPositionInfo &pos, string action);
+    void     RecordTradeResult(ulong ticket, ENUM_POSITION_TYPE type, double profit);
+    void     UpdateConsecutiveLosses();
     
 public:
     CTradeManager(int magic_number, double lot_size, int max_positions = 2, bool allow_hedging = true);
@@ -67,6 +81,12 @@ public:
     double GetTotalVolume();
     string GetPositionsSummary();
     string GetDetailedPositionInfo();
+    
+    // Consecutive loss management methods
+    bool IsBuyBlocked() { return m_block_buy_trades; }
+    bool IsSellBlocked() { return m_block_sell_trades; }
+    void ResetBuyBlock() { m_block_buy_trades = false; m_consecutive_buy_losses = 0; }
+    void ResetSellBlock() { m_block_sell_trades = false; m_consecutive_sell_losses = 0; }
     
     // Settings methods
     void SetLotSize(double lot_size) { m_lot_size = lot_size; }
@@ -97,6 +117,22 @@ CTradeManager::CTradeManager(int magic_number, double lot_size, int max_position
     ArrayResize(m_buy_positions, 0);
     ArrayResize(m_sell_positions, 0);
     
+    // Initialize consecutive loss tracking
+    m_last_trade_index = 0;
+    m_consecutive_buy_losses = 0;
+    m_consecutive_sell_losses = 0;
+    m_block_buy_trades = false;
+    m_block_sell_trades = false;
+    
+    // Clear trade history array
+    for(int i = 0; i < 10; i++)
+    {
+        m_last_trades[i].ticket = 0;
+        m_last_trades[i].profit = 0;
+        m_last_trades[i].type = POSITION_TYPE_BUY; // Default
+        m_last_trades[i].close_time = 0;
+    }
+    
     Print("TradeManager initialized - Magic: ", m_magic_number, 
           ", Lot: ", m_lot_size, 
           ", Max Positions: ", m_max_positions,
@@ -116,6 +152,19 @@ CTradeManager::~CTradeManager()
 //+------------------------------------------------------------------+
 bool CTradeManager::OpenPosition(ENUM_SIGNAL_TYPE signal, double stop_loss = 0, double take_profit = 0)
 {
+    // Check for trade direction blocks
+    if(signal == SIGNAL_BUY_ENTRY && m_block_buy_trades)
+    {
+        Print("Trade rejected: Buy direction is blocked due to consecutive losses");
+        return false;
+    }
+    
+    if(signal == SIGNAL_SELL_ENTRY && m_block_sell_trades)
+    {
+        Print("Trade rejected: Sell direction is blocked due to consecutive losses");
+        return false;
+    }
+    
     // Validate trade request
     if(!ValidateTradeRequest(signal))
         return false;
@@ -194,6 +243,26 @@ void CTradeManager::ManagePositions(CSignalAnalyzer *signal_analyzer, bool enabl
     // Get current signal
     ENUM_SIGNAL_TYPE signal = signal_analyzer.AnalyzeSignal();
     
+    // Check if we have an opposite trade completion that should reset blocks
+    bool have_buy_positions = (ArraySize(m_buy_positions) > 0);
+    bool have_sell_positions = (ArraySize(m_sell_positions) > 0);
+    
+    // If we have any position in the opposite direction of the block,
+    // remove the block (profitability doesn't matter)
+    if(m_block_buy_trades && have_sell_positions)
+    {
+        // Reset buy block when we have any sell trade
+        ResetBuyBlock();
+        Print("Buy trade block removed due to presence of sell trade");
+    }
+    
+    if(m_block_sell_trades && have_buy_positions)
+    {
+        // Reset sell block when we have any buy trade
+        ResetSellBlock();
+        Print("Sell trade block removed due to presence of buy trade");
+    }
+    
     // Manage buy positions - iterate backwards to avoid index issues when closing
     int buy_count = ArraySize(m_buy_positions);
     for(int i = buy_count - 1; i >= 0; i--)
@@ -245,9 +314,14 @@ void CTradeManager::ManagePositions(CSignalAnalyzer *signal_analyzer, bool enabl
             Print("- Current Profit: ", DoubleToString(m_buy_positions[i].current_profit, 2));
             Print("- Duration: ", m_buy_positions[i].candles_count, " candles");
             
-            if(ClosePosition(m_buy_positions[i].ticket))
+            double position_profit = m_buy_positions[i].current_profit;
+            ulong position_ticket = m_buy_positions[i].ticket;
+            
+            if(ClosePosition(position_ticket))
             {
-                //LogPositionInfo(m_buy_positions[i], "CLOSED");
+                // Record trade result
+                RecordTradeResult(position_ticket, POSITION_TYPE_BUY, position_profit);
+                
                 // Update arrays after closing position
                 UpdatePositionArrays();
             }
@@ -305,14 +379,96 @@ void CTradeManager::ManagePositions(CSignalAnalyzer *signal_analyzer, bool enabl
             Print("- Current Profit: ", DoubleToString(m_sell_positions[i].current_profit, 2));
             Print("- Duration: ", m_sell_positions[i].candles_count, " candles");
             
-            if(ClosePosition(m_sell_positions[i].ticket))
+            double position_profit = m_sell_positions[i].current_profit;
+            ulong position_ticket = m_sell_positions[i].ticket;
+            
+            if(ClosePosition(position_ticket))
             {
-                //LogPositionInfo(m_sell_positions[i], "CLOSED");
+                // Record trade result
+                RecordTradeResult(position_ticket, POSITION_TYPE_SELL, position_profit);
+                
                 // Update arrays after closing position
                 UpdatePositionArrays();
             }
         }
     }
+}
+
+//+------------------------------------------------------------------+
+//| Record trade result and update consecutive loss counters        |
+//+------------------------------------------------------------------+
+void CTradeManager::RecordTradeResult(ulong ticket, ENUM_POSITION_TYPE type, double profit)
+{
+    // Record this trade in the circular buffer
+    m_last_trades[m_last_trade_index].ticket = ticket;
+    m_last_trades[m_last_trade_index].type = type;
+    m_last_trades[m_last_trade_index].profit = profit;
+    m_last_trades[m_last_trade_index].close_time = TimeCurrent();
+    
+    // Move to next position in circular buffer
+    m_last_trade_index = (m_last_trade_index + 1) % 10;
+    
+    // Update consecutive loss counts
+    UpdateConsecutiveLosses();
+}
+
+//+------------------------------------------------------------------+
+//| Update consecutive losses counters                              |
+//+------------------------------------------------------------------+
+void CTradeManager::UpdateConsecutiveLosses()
+{
+    int recent_buy_count = 0;
+    int recent_sell_count = 0;
+    int recent_buy_losses = 0;
+    int recent_sell_losses = 0;
+    
+    // Check the last 10 trades (or fewer if we don't have 10 yet)
+    for(int i = 0; i < 10; i++)
+    {
+        // Skip empty records
+        if(m_last_trades[i].ticket == 0)
+            continue;
+            
+        if(m_last_trades[i].type == POSITION_TYPE_BUY)
+        {
+            recent_buy_count++;
+            
+            if(m_last_trades[i].profit < 0)
+                recent_buy_losses++;
+            else
+                break; // Break the streak on a profit
+        }
+        else if(m_last_trades[i].type == POSITION_TYPE_SELL)
+        {
+            recent_sell_count++;
+            
+            if(m_last_trades[i].profit < 0)
+                recent_sell_losses++;
+            else
+                break; // Break the streak on a profit
+        }
+    }
+    
+    // Update consecutive loss counters
+    m_consecutive_buy_losses = recent_buy_losses;
+    m_consecutive_sell_losses = recent_sell_losses;
+    
+    // Apply trading blocks if 2 consecutive losses in same direction
+    if(m_consecutive_buy_losses >= 2)
+    {
+        m_block_buy_trades = true;
+        Print("WARNING: Blocking BUY trades due to ", m_consecutive_buy_losses, " consecutive losses");
+    }
+    
+    if(m_consecutive_sell_losses >= 2)
+    {
+        m_block_sell_trades = true;
+        Print("WARNING: Blocking SELL trades due to ", m_consecutive_sell_losses, " consecutive losses");
+    }
+    
+    // Debug output
+    Print("Trade history updated - Buy losses: ", m_consecutive_buy_losses, 
+          ", Sell losses: ", m_consecutive_sell_losses);
 }
 
 //+------------------------------------------------------------------+
@@ -328,15 +484,25 @@ bool CTradeManager::CloseAllPositions()
     // Close all buy positions
     for(int i = 0; i < ArraySize(m_buy_positions); i++)
     {
-        if(!ClosePosition(m_buy_positions[i].ticket))
+        double position_profit = m_buy_positions[i].current_profit;
+        ulong position_ticket = m_buy_positions[i].ticket;
+        
+        if(!ClosePosition(position_ticket))
             all_closed = false;
+        else
+            RecordTradeResult(position_ticket, POSITION_TYPE_BUY, position_profit);
     }
     
     // Close all sell positions
     for(int i = 0; i < ArraySize(m_sell_positions); i++)
     {
-        if(!ClosePosition(m_sell_positions[i].ticket))
+        double position_profit = m_sell_positions[i].current_profit;
+        ulong position_ticket = m_sell_positions[i].ticket;
+        
+        if(!ClosePosition(position_ticket))
             all_closed = false;
+        else
+            RecordTradeResult(position_ticket, POSITION_TYPE_SELL, position_profit);
     }
     
     UpdatePositionArrays();
@@ -344,6 +510,7 @@ bool CTradeManager::CloseAllPositions()
     
     return all_closed;
 }
+
 
 //+------------------------------------------------------------------+
 //| Close positions by type                                         |
@@ -358,8 +525,13 @@ bool CTradeManager::ClosePositionsByType(ENUM_POSITION_TYPE type)
         Print("Closing all BUY positions...");
         for(int i = 0; i < ArraySize(m_buy_positions); i++)
         {
-            if(!ClosePosition(m_buy_positions[i].ticket))
+            double position_profit = m_buy_positions[i].current_profit;
+            ulong position_ticket = m_buy_positions[i].ticket;
+            
+            if(!ClosePosition(position_ticket))
                 all_closed = false;
+            else
+                RecordTradeResult(position_ticket, POSITION_TYPE_BUY, position_profit);
         }
     }
     else if(type == POSITION_TYPE_SELL)
@@ -367,8 +539,13 @@ bool CTradeManager::ClosePositionsByType(ENUM_POSITION_TYPE type)
         Print("Closing all SELL positions...");
         for(int i = 0; i < ArraySize(m_sell_positions); i++)
         {
-            if(!ClosePosition(m_sell_positions[i].ticket))
+            double position_profit = m_sell_positions[i].current_profit;
+            ulong position_ticket = m_sell_positions[i].ticket;
+            
+            if(!ClosePosition(position_ticket))
                 all_closed = false;
+            else
+                RecordTradeResult(position_ticket, POSITION_TYPE_SELL, position_profit);
         }
     }
     
@@ -673,6 +850,19 @@ bool CTradeManager::ValidateTradeRequest(ENUM_SIGNAL_TYPE signal)
     if(signal != SIGNAL_BUY_ENTRY && signal != SIGNAL_SELL_ENTRY)
     {
         Print("Error: Invalid signal type for trade request");
+        return false;
+    }
+    
+    // Check for direction blocks due to consecutive losses
+    if(signal == SIGNAL_BUY_ENTRY && m_block_buy_trades)
+    {
+        Print("Trade rejected: Buy direction is blocked due to consecutive losses");
+        return false;
+    }
+    
+    if(signal == SIGNAL_SELL_ENTRY && m_block_sell_trades)
+    {
+        Print("Trade rejected: Sell direction is blocked due to consecutive losses");
         return false;
     }
     
