@@ -33,8 +33,8 @@ private:
     int     m_rsi_handle;
     
 public:
-    CIndicatorChart(int macd_fast = 5, int macd_slow = 35, int macd_signal = 12,
-                   int cci_period = 100, int adx_period = 14, int rsi_period = 14);
+    CIndicatorChart(int macd_fast = 5, int macd_slow = 35, int macd_signal = 9,
+                   int cci_period = 100, int adx_period = 14, int rsi_period = 10);
     ~CIndicatorChart();
     
     bool AddAllIndicators();
@@ -56,8 +56,8 @@ public:
 //+------------------------------------------------------------------+
 //| Constructor                                                      |
 //+------------------------------------------------------------------+
-CIndicatorChart::CIndicatorChart(int macd_fast = 5, int macd_slow = 35, int macd_signal = 12,
-                                int cci_period = 100, int adx_period = 14, int rsi_period = 14)
+CIndicatorChart::CIndicatorChart(int macd_fast = 5, int macd_slow = 35, int macd_signal = 9,
+                                int cci_period = 100, int adx_period = 14, int rsi_period = 10)
 {
     m_chart_id = ChartID();
     m_macd_window = -1;
