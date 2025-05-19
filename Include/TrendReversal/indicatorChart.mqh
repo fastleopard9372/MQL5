@@ -168,9 +168,9 @@ void CIndicatorChart::RemoveAllIndicators()
     ObjectDelete(m_chart_id, "CCI_Plus100");
     ObjectDelete(m_chart_id, "CCI_Minus100");
     ObjectDelete(m_chart_id, "CCI_Zero");
-    ObjectDelete(m_chart_id, "RSI_70");
-    ObjectDelete(m_chart_id, "RSI_50");
-    ObjectDelete(m_chart_id, "RSI_30");
+    ObjectDelete(m_chart_id, "RSI_OB");
+    ObjectDelete(m_chart_id, "RSI_CN");
+    ObjectDelete(m_chart_id, "RSI_OS");
     ObjectDelete(m_chart_id, "ADX_20");
     ObjectDelete(m_chart_id, "MACD_Zero");
     
@@ -379,40 +379,40 @@ void CIndicatorChart::AddLevelLines()
     // RSI levels (70, 50, 30)
     if(m_rsi_window >= 0)
     {
-        string rsi_70_name = "RSI_70";
-        string rsi_50_name = "RSI_50";
-        string rsi_30_name = "RSI_30";
+        string rsi_ob_name = "RSI_OB";
+        string rsi_cn_name = "RSI_CN";
+        string rsi_os_name = "RSI_OS";
         
         // Remove existing lines first
-        ObjectDelete(m_chart_id, rsi_70_name);
-        ObjectDelete(m_chart_id, rsi_50_name);
-        ObjectDelete(m_chart_id, rsi_30_name);
+        ObjectDelete(m_chart_id, rsi_ob_name);
+        ObjectDelete(m_chart_id, rsi_cn_name);
+        ObjectDelete(m_chart_id, rsi_os_name);
         
         // Add 70 line (Overbought)
-        if(ObjectCreate(m_chart_id, rsi_70_name, OBJ_HLINE, m_rsi_window, 0, 70))
+        if(ObjectCreate(m_chart_id, rsi_ob_name, OBJ_HLINE, m_rsi_window, 0, 70))
         {
-            ObjectSetInteger(m_chart_id, rsi_70_name, OBJPROP_COLOR, clrRed);
-            ObjectSetInteger(m_chart_id, rsi_70_name, OBJPROP_STYLE, STYLE_DASH);
-            ObjectSetInteger(m_chart_id, rsi_70_name, OBJPROP_WIDTH, 2);
-            ObjectSetString(m_chart_id, rsi_70_name, OBJPROP_TEXT, "Overbought 70");
+            ObjectSetInteger(m_chart_id, rsi_ob_name, OBJPROP_COLOR, clrRed);
+            ObjectSetInteger(m_chart_id, rsi_ob_name, OBJPROP_STYLE, STYLE_DASH);
+            ObjectSetInteger(m_chart_id, rsi_ob_name, OBJPROP_WIDTH, 2);
+            ObjectSetString(m_chart_id, rsi_ob_name, OBJPROP_TEXT, "Overbought 70");
         }
         
         // Add 50 line (Middle)
-        if(ObjectCreate(m_chart_id, rsi_50_name, OBJ_HLINE, m_rsi_window, 0, 50))
+        if(ObjectCreate(m_chart_id, rsi_cn_name, OBJ_HLINE, m_rsi_window, 0, 50))
         {
-            ObjectSetInteger(m_chart_id, rsi_50_name, OBJPROP_COLOR, clrGray);
-            ObjectSetInteger(m_chart_id, rsi_50_name, OBJPROP_STYLE, STYLE_DOT);
-            ObjectSetInteger(m_chart_id, rsi_50_name, OBJPROP_WIDTH, 1);
-            ObjectSetString(m_chart_id, rsi_50_name, OBJPROP_TEXT, "Midline 50");
+            ObjectSetInteger(m_chart_id, rsi_cn_name, OBJPROP_COLOR, clrGray);
+            ObjectSetInteger(m_chart_id, rsi_cn_name, OBJPROP_STYLE, STYLE_DOT);
+            ObjectSetInteger(m_chart_id, rsi_cn_name, OBJPROP_WIDTH, 1);
+            ObjectSetString(m_chart_id, rsi_cn_name, OBJPROP_TEXT, "Midline 50");
         }
         
         // Add 30 line (Oversold)
-        if(ObjectCreate(m_chart_id, rsi_30_name, OBJ_HLINE, m_rsi_window, 0, 30))
+        if(ObjectCreate(m_chart_id, rsi_os_name, OBJ_HLINE, m_rsi_window, 0, 30))
         {
-            ObjectSetInteger(m_chart_id, rsi_30_name, OBJPROP_COLOR, clrLime);
-            ObjectSetInteger(m_chart_id, rsi_30_name, OBJPROP_STYLE, STYLE_DASH);
-            ObjectSetInteger(m_chart_id, rsi_30_name, OBJPROP_WIDTH, 2);
-            ObjectSetString(m_chart_id, rsi_30_name, OBJPROP_TEXT, "Oversold 30");
+            ObjectSetInteger(m_chart_id, rsi_os_name, OBJPROP_COLOR, clrLime);
+            ObjectSetInteger(m_chart_id, rsi_os_name, OBJPROP_STYLE, STYLE_DASH);
+            ObjectSetInteger(m_chart_id, rsi_os_name, OBJPROP_WIDTH, 2);
+            ObjectSetString(m_chart_id, rsi_os_name, OBJPROP_TEXT, "Oversold 30");
         }
         
         Print("RSI level lines added: 70 (overbought), 50 (midline), 30 (oversold)");
