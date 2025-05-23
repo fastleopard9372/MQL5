@@ -20,7 +20,6 @@ struct SPositionInfo
     double   volume;
     string   comment;
     ENUM_POSITION_TYPE type;
-    string   symbol;  // Added symbol field to track which symbol the position is for
 };
 
 enum TradeLock { LOCK_NONE, LOCK_BUY, LOCK_SELL };
@@ -35,13 +34,23 @@ private:
     int      m_magic_number;
     double   m_lot_size;
     int      m_max_positions;
-    int      m_max_positions_per_symbol;  // Added max positions per symbol
+    int      m_max_positions_per_symbol; // Added for per-symbol limit
     bool     m_allow_hedging;
     bool     m_lock2TradingFail;
     TradeLock lockState;
 
     SPositionInfo m_buy_positions[];
     SPositionInfo m_sell_positions[];
+    
+    // Symbol-specific position tracking
+    struct SymbolPositions {
+        string symbol;
+        int buy_count;
+        int sell_count;
+        int total_count;
+    };
+    SymbolPositions m_symbol_positions[10]; // Support tracking up to 10 different symbols
+    int m_tracked_symbols_count;
     
     // Private helper methods
     bool     UpdatePositionInfo(SPositionInfo &pos);
@@ -51,10 +60,11 @@ private:
     void     LogPositionInfo(const SPositionInfo &pos, string action);
     void     CheckAndUpdateLock();
     bool     CanTrade(ENUM_SIGNAL_TYPE signal);
-    int      CountPositionsBySymbol(string symbol, ENUM_POSITION_TYPE type);  // New method to count positions per symbol
+    void     UpdateSymbolPositionCounts();
+    bool     CheckSymbolPositionLimits(string symbol, ENUM_SIGNAL_TYPE signal);
 
 public:
-    CTradeManager(int magic_number, double lot_size, int max_positions = 2, bool allow_hedging = true, bool lock2TradingFail = true);
+    CTradeManager(int magic_number, double lot_size, int max_positions = 4, bool allow_hedging = true, bool lock2TradingFail = true);
     ~CTradeManager();
     
     // Main trading methods
@@ -80,7 +90,7 @@ public:
     // Settings methods
     void SetLotSize(double lot_size) { m_lot_size = lot_size; }
     void SetMaxPositions(int max_positions) { m_max_positions = max_positions; }
-    void SetMaxPositionsPerSymbol(int max_positions) { m_max_positions_per_symbol = max_positions; }  // New method
+    void SetMaxPositionsPerSymbol(int max) { m_max_positions_per_symbol = max; }
     void SetAllowHedging(bool allow_hedging) { m_allow_hedging = allow_hedging; }
     
     // Validation methods
@@ -91,14 +101,15 @@ public:
 //+------------------------------------------------------------------+
 //| Constructor                                                      |
 //+------------------------------------------------------------------+
-CTradeManager::CTradeManager(int magic_number, double lot_size, int max_positions = 2, bool allow_hedging = true, bool lock2TradingFail = true)
+CTradeManager::CTradeManager(int magic_number, double lot_size, int max_positions = 4, bool allow_hedging = true, bool lock2TradingFail = true)
 {
     m_magic_number = magic_number;
     m_lot_size = lot_size;
     m_max_positions = max_positions;
-    m_max_positions_per_symbol = 2;  // Default to 2 positions per symbol
+    m_max_positions_per_symbol = 2; // Default to 2 positions per symbol
     m_allow_hedging = allow_hedging;
     m_lock2TradingFail = lock2TradingFail;
+    m_tracked_symbols_count = 0;
 
     // Configure trade class
     m_trade.SetExpertMagicNumber(m_magic_number);
@@ -114,7 +125,6 @@ CTradeManager::CTradeManager(int magic_number, double lot_size, int max_position
     Print("TradeManager initialized - Magic: ", m_magic_number, 
           ", Lot: ", m_lot_size, 
           ", Max Positions: ", m_max_positions,
-          ", Max Positions Per Symbol: ", m_max_positions_per_symbol,
           ", Hedging: ", (m_allow_hedging ? "Enabled" : "Disabled"));
 }
 
@@ -170,7 +180,6 @@ bool CTradeManager::OpenPosition(ENUM_SIGNAL_TYPE signal, double stop_loss = 0, 
         Print("SUCCESS: Position opened");
         Print("- Type: ", (signal == SIGNAL_BUY_ENTRY ? "BUY" : "SELL"));
         Print("- Ticket: ", ticket);
-        Print("- Symbol: ", symbol);
         Print("- Price: ", price);
         Print("- Volume: ", m_lot_size);
         Print("- SL: ", (stop_loss > 0 ? DoubleToString(stop_loss, Digits()) : "None"));
@@ -179,49 +188,18 @@ bool CTradeManager::OpenPosition(ENUM_SIGNAL_TYPE signal, double stop_loss = 0, 
         // Update position arrays
         Sleep(100); // Brief pause to ensure position is registered
         UpdatePositionArrays();
+        UpdateSymbolPositionCounts();
     }
     else
     {
         uint error_code = GetLastError();
         Print("ERROR: Failed to open position");
         Print("- Signal: ", signal);
-        Print("- Symbol: ", symbol);
         Print("- Error Code: ", error_code);
         Print("- Error Description: ", m_trade.ResultComment());
     }
     
     return result;
-}
-
-//+------------------------------------------------------------------+
-//| Count positions by symbol and type                              |
-//+------------------------------------------------------------------+
-int CTradeManager::CountPositionsBySymbol(string symbol, ENUM_POSITION_TYPE type)
-{
-    int count = 0;
-    
-    // Update arrays to ensure we have the latest position data
-    UpdatePositionArrays();
-    
-    if(type == POSITION_TYPE_BUY || type == -1)  // -1 means count both types
-    {
-        for(int i = 0; i < ArraySize(m_buy_positions); i++)
-        {
-            if(m_buy_positions[i].symbol == symbol)
-                count++;
-        }
-    }
-    
-    if(type == POSITION_TYPE_SELL || type == -1)  // -1 means count both types
-    {
-        for(int i = 0; i < ArraySize(m_sell_positions); i++)
-        {
-            if(m_sell_positions[i].symbol == symbol)
-                count++;
-        }
-    }
-    
-    return count;
 }
 
 //+------------------------------------------------------------------+
@@ -238,6 +216,7 @@ void CTradeManager::ManagePositions(CSignalAnalyzer *signal_analyzer, bool enabl
     
     // Update position arrays first
     UpdatePositionArrays();
+    UpdateSymbolPositionCounts();
     
     // Get current signal
     ENUM_SIGNAL_TYPE signal = signal_analyzer.AnalyzeSignal();
@@ -249,13 +228,14 @@ void CTradeManager::ManagePositions(CSignalAnalyzer *signal_analyzer, bool enabl
         // Validate array index before accessing
         if(i >= ArraySize(m_buy_positions) || i < 0)
             continue;
-            
+
         if(!UpdatePositionInfo(m_buy_positions[i]))
         {
             // Position no longer exists, remove from array
             Print("Buy position ", m_buy_positions[i].ticket, " no longer exists, removing from tracking");
             // Update arrays and continue with adjusted index
             UpdatePositionArrays();
+            UpdateSymbolPositionCounts();
             continue;
         }
         
@@ -263,8 +243,8 @@ void CTradeManager::ManagePositions(CSignalAnalyzer *signal_analyzer, bool enabl
         string close_reason = "";
 
         if(m_buy_positions[i].candles_count < 5)
-            continue;
-
+            return;
+        
         // Check signal-based exit
         if(enable_signal_exit && signal == SIGNAL_BUY_EXIT)
         {
@@ -292,7 +272,6 @@ void CTradeManager::ManagePositions(CSignalAnalyzer *signal_analyzer, bool enabl
         if(should_close)
         {
             Print("Closing BUY position ", m_buy_positions[i].ticket);
-            Print("- Symbol: ", m_buy_positions[i].symbol);
             Print("- Reason: ", close_reason);
             Print("- Current Profit: ", DoubleToString(m_buy_positions[i].current_profit, 2));
             Print("- Duration: ", m_buy_positions[i].candles_count, " candles");
@@ -302,6 +281,7 @@ void CTradeManager::ManagePositions(CSignalAnalyzer *signal_analyzer, bool enabl
                 //LogPositionInfo(m_buy_positions[i], "CLOSED");
                 // Update arrays after closing position
                 UpdatePositionArrays();
+                UpdateSymbolPositionCounts();
             }
         }
     }
@@ -320,6 +300,7 @@ void CTradeManager::ManagePositions(CSignalAnalyzer *signal_analyzer, bool enabl
             Print("Sell position ", m_sell_positions[i].ticket, " no longer exists, removing from tracking");
             // Update arrays and continue with adjusted index
             UpdatePositionArrays();
+            UpdateSymbolPositionCounts();
             continue;
         }
         
@@ -327,7 +308,7 @@ void CTradeManager::ManagePositions(CSignalAnalyzer *signal_analyzer, bool enabl
         string close_reason = "";
 
         if(m_sell_positions[i].candles_count < 5)
-            continue;
+            return;
         
         // Check signal-based exit
         if(enable_signal_exit && signal == SIGNAL_SELL_EXIT)
@@ -356,7 +337,6 @@ void CTradeManager::ManagePositions(CSignalAnalyzer *signal_analyzer, bool enabl
         if(should_close)
         {
             Print("Closing SELL position ", m_sell_positions[i].ticket);
-            Print("- Symbol: ", m_sell_positions[i].symbol);
             Print("- Reason: ", close_reason);
             Print("- Current Profit: ", DoubleToString(m_sell_positions[i].current_profit, 2));
             Print("- Duration: ", m_sell_positions[i].candles_count, " candles");
@@ -366,6 +346,7 @@ void CTradeManager::ManagePositions(CSignalAnalyzer *signal_analyzer, bool enabl
                 //LogPositionInfo(m_sell_positions[i], "CLOSED");
                 // Update arrays after closing position
                 UpdatePositionArrays();
+                UpdateSymbolPositionCounts();
             }
         }
     }
@@ -396,6 +377,7 @@ bool CTradeManager::CloseAllPositions()
     }
     
     UpdatePositionArrays();
+    UpdateSymbolPositionCounts();
     Print("Close all positions result: ", (all_closed ? "Success" : "Partial/Failed"));
     
     return all_closed;
@@ -429,6 +411,7 @@ bool CTradeManager::ClosePositionsByType(ENUM_POSITION_TYPE type)
     }
     
     UpdatePositionArrays();
+    UpdateSymbolPositionCounts();
     return all_closed;
 }
 
@@ -462,7 +445,6 @@ void CTradeManager::UpdatePositionArrays()
                 pos.volume = PositionGetDouble(POSITION_VOLUME);
                 pos.comment = PositionGetString(POSITION_COMMENT);
                 pos.candles_count = CountCandlesSinceOpen(pos.open_time);
-                pos.symbol = PositionGetString(POSITION_SYMBOL);  // Store the symbol
                 
                 // Add to appropriate array
                 if(pos.type == POSITION_TYPE_BUY)
@@ -517,6 +499,7 @@ bool CTradeManager::ClosePosition(ulong ticket)
         // Brief pause before updating arrays
         Sleep(100);
         UpdatePositionArrays();
+        UpdateSymbolPositionCounts();
     }
     else
     {
@@ -587,7 +570,6 @@ void CTradeManager::LogPositionInfo(const SPositionInfo &pos, string action)
     Print("=== POSITION ", action, " ===");
     Print("Ticket: ", pos.ticket);
     Print("Type: ", (pos.type == POSITION_TYPE_BUY ? "BUY" : "SELL"));
-    Print("Symbol: ", pos.symbol);
     Print("Volume: ", pos.volume);
     Print("Open Price: ", pos.open_price);
     Print("Current Price: ", pos.current_price);
@@ -693,9 +675,8 @@ string CTradeManager::GetDetailedPositionInfo()
         for(int i = 0; i < ArraySize(m_buy_positions); i++)
         {
             UpdatePositionInfo(m_buy_positions[i]);
-            info += StringFormat("- #%d: %s, %.2f lots, P&L: %.2f, %d candles\n",
+            info += StringFormat("- #%d: %.2f lots, P&L: %.2f, %d candles\n",
                                (int)m_buy_positions[i].ticket,
-                               m_buy_positions[i].symbol,
                                m_buy_positions[i].volume,
                                m_buy_positions[i].current_profit,
                                m_buy_positions[i].candles_count);
@@ -709,9 +690,8 @@ string CTradeManager::GetDetailedPositionInfo()
         for(int i = 0; i < ArraySize(m_sell_positions); i++)
         {
             UpdatePositionInfo(m_sell_positions[i]);
-            info += StringFormat("- #%d: %s, %.2f lots, P&L: %.2f, %d candles\n",
+            info += StringFormat("- #%d: %.2f lots, P&L: %.2f, %d candles\n",
                                (int)m_sell_positions[i].ticket,
-                               m_sell_positions[i].symbol,
                                m_sell_positions[i].volume,
                                m_sell_positions[i].current_profit,
                                m_sell_positions[i].candles_count);
@@ -722,6 +702,119 @@ string CTradeManager::GetDetailedPositionInfo()
     info += "======================";
     
     return info;
+}
+
+//+------------------------------------------------------------------+
+//| Update position counts for each symbol                           |
+//+------------------------------------------------------------------+
+void CTradeManager::UpdateSymbolPositionCounts()
+{
+    // Clear current counts
+    for(int i=0; i<m_tracked_symbols_count; i++)
+    {
+        m_symbol_positions[i].buy_count = 0;
+        m_symbol_positions[i].sell_count = 0;
+        m_symbol_positions[i].total_count = 0;
+    }
+    
+    // Reset tracked symbols count
+    m_tracked_symbols_count = 0;
+    
+    // Scan all positions and update counts
+    for(int i=0; i<PositionsTotal(); i++)
+    {
+        ulong ticket = PositionGetTicket(i);
+        if(ticket > 0 && PositionSelectByTicket(ticket))
+        {
+            // Check if position belongs to this EA
+            if(PositionGetInteger(POSITION_MAGIC) == m_magic_number)
+            {
+                string pos_symbol = PositionGetString(POSITION_SYMBOL);
+                ENUM_POSITION_TYPE pos_type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+                
+                // Find or add symbol to tracking
+                int symbol_index = -1;
+                for(int j=0; j<m_tracked_symbols_count; j++)
+                {
+                    if(m_symbol_positions[j].symbol == pos_symbol)
+                    {
+                        symbol_index = j;
+                        break;
+                    }
+                }
+                
+                // If symbol not found, add it
+                if(symbol_index == -1)
+                {
+                    if(m_tracked_symbols_count < 10) // Limit to array size
+                    {
+                        symbol_index = m_tracked_symbols_count;
+                        m_symbol_positions[symbol_index].symbol = pos_symbol;
+                        m_tracked_symbols_count++;
+                    }
+                    else
+                    {
+                        Print("Warning: Too many symbols being tracked");
+                        continue;
+                    }
+                }
+                
+                // Update counts
+                if(pos_type == POSITION_TYPE_BUY)
+                    m_symbol_positions[symbol_index].buy_count++;
+                else if(pos_type == POSITION_TYPE_SELL)
+                    m_symbol_positions[symbol_index].sell_count++;
+                
+                m_symbol_positions[symbol_index].total_count++;
+            }
+        }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Check if a new position for a symbol respects limits             |
+//+------------------------------------------------------------------+
+bool CTradeManager::CheckSymbolPositionLimits(string symbol, ENUM_SIGNAL_TYPE signal)
+{
+    // Find symbol in tracking array
+    int symbol_index = -1;
+    for(int i=0; i<m_tracked_symbols_count; i++)
+    {
+        if(m_symbol_positions[i].symbol == symbol)
+        {
+            symbol_index = i;
+            break;
+        }
+    }
+    
+    // If symbol not found, it has no positions yet
+    if(symbol_index == -1)
+        return true;
+    
+    // Check total positions for this symbol (max 2)
+    if(m_symbol_positions[symbol_index].total_count >= m_max_positions_per_symbol)
+    {
+        Print("Trade rejected: Maximum positions (", m_max_positions_per_symbol, ") for symbol ", symbol, " reached");
+        return false;
+    }
+    
+    // If we have 1 position for this symbol, enforce opposite direction
+    if(m_symbol_positions[symbol_index].total_count == 1)
+    {
+        if(signal == SIGNAL_BUY_ENTRY && m_symbol_positions[symbol_index].buy_count > 0)
+        {
+            Print("Trade rejected: Cannot open second buy position for symbol ", symbol);
+            return false;
+        }
+        
+        if(signal == SIGNAL_SELL_ENTRY && m_symbol_positions[symbol_index].sell_count > 0)
+        {
+            Print("Trade rejected: Cannot open second sell position for symbol ", symbol);
+            return false;
+        }
+    }
+    
+    return true;
 }
 
 //+------------------------------------------------------------------+
@@ -736,54 +829,33 @@ bool CTradeManager::ValidateTradeRequest(ENUM_SIGNAL_TYPE signal)
         return false;
     }
     
-    // Get current symbol
-    string current_symbol = Symbol();
+    // Update position arrays and symbol counts
+    UpdatePositionArrays();
+    UpdateSymbolPositionCounts();
     
-    // Check maximum position limits
+    // Check overall maximum position limits (now 4)
     if(GetActivePositionsCount() >= m_max_positions)
     {
-        Print("Trade rejected: Maximum positions (", m_max_positions, ") reached");
+        Print("Trade rejected: Maximum total positions (", m_max_positions, ") reached");
         return false;
     }
     
-    // Check maximum positions per symbol
-    ENUM_POSITION_TYPE position_type = (signal == SIGNAL_BUY_ENTRY) ? POSITION_TYPE_BUY : POSITION_TYPE_SELL;
-    int symbol_positions = CountPositionsBySymbol(current_symbol, position_type);
-    
-    if(symbol_positions >= m_max_positions_per_symbol)
-    {
-        Print("Trade rejected: Maximum positions (", m_max_positions_per_symbol, ") for symbol ", 
-              current_symbol, " of type ", (position_type == POSITION_TYPE_BUY ? "BUY" : "SELL"), " reached");
+    // Check symbol-specific limits (max 2 per symbol, opposite directions)
+    string symbol = Symbol(); // Current chart symbol
+    if(!CheckSymbolPositionLimits(symbol, signal))
         return false;
-    }
     
     // Check hedging rules
-    UpdatePositionArrays();
-    
-    if(!m_allow_hedging && GetActivePositionsCount() > 0)
+    if(!m_allow_hedging)
     {
-        Print("Trade rejected: Hedging is disabled and position already exists");
-        return false;
-    }
-    
-    // For hedging allowed, enforce opposite position rule when at max-1 positions
-    if(m_allow_hedging && GetActivePositionsCount() == (m_max_positions - 1))
-    {
-        bool has_buy = ArraySize(m_buy_positions) > 0;
-        bool has_sell = ArraySize(m_sell_positions) > 0;
-        
-        // If we have a buy position, we can only open sell
-        if(has_buy && signal == SIGNAL_BUY_ENTRY)
+        // If hedging is disabled, check if we already have a position for this symbol
+        for(int i=0; i<m_tracked_symbols_count; i++)
         {
-            // Print("Trade rejected: Cannot open second buy position - must hedge with sell");
-            return false;
-        }
-        
-        // If we have a sell position, we can only open buy
-        if(has_sell && signal == SIGNAL_SELL_ENTRY)
-        {
-            // Print("Trade rejected: Cannot open second sell position - must hedge with buy");
-            return false;
+            if(m_symbol_positions[i].symbol == symbol && m_symbol_positions[i].total_count > 0)
+            {
+                Print("Trade rejected: Hedging is disabled and position for ", symbol, " already exists");
+                return false;
+            }
         }
     }
     
@@ -895,6 +967,7 @@ void CTradeManager::CheckAndUpdateLock()
         lockState = LOCK_SELL;
     else
         lockState = LOCK_NONE;
+
 }
 
 bool CTradeManager::CanTrade(ENUM_SIGNAL_TYPE type)
