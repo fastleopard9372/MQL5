@@ -246,7 +246,7 @@ void CTradeManager::ManagePositions(CSignalAnalyzer *signal_analyzer, bool enabl
             return;
         
         // Check signal-based exit
-        if(enable_signal_exit && signal == SIGNAL_BUY_EXIT)
+        if(enable_signal_exit && (signal == SIGNAL_BUY_EXIT || signal == SIGNAL_SELL_ENTRY))
         {
             should_close = true;
             close_reason = "Buy exit signal detected";
@@ -311,7 +311,7 @@ void CTradeManager::ManagePositions(CSignalAnalyzer *signal_analyzer, bool enabl
             return;
         
         // Check signal-based exit
-        if(enable_signal_exit && signal == SIGNAL_SELL_EXIT)
+        if(enable_signal_exit && (signal == SIGNAL_SELL_EXIT || signal == SIGNAL_BUY_ENTRY))
         {
             should_close = true;
             close_reason = "Sell exit signal detected";
@@ -859,8 +859,8 @@ bool CTradeManager::ValidateTradeRequest(ENUM_SIGNAL_TYPE signal)
         }
     }
     
-    if(!CanTrade(signal) && m_lock2TradingFail)
-        return false;
+    //if(!CanTrade(signal) && m_lock2TradingFail)
+    //    return false;
         
     return true;
 }
