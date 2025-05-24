@@ -13,26 +13,33 @@ class CIndicatorChart
 {
 private:
     long    m_chart_id;
+    int     m_macd_window;
     int     m_cci_window;
     int     m_adx_window;
     int     m_rsi_window;
     
     // Custom indicator parameters
+    int     m_macd_fast;
+    int     m_macd_slow;
+    int     m_macd_signal;
     int     m_cci_period;
     int     m_adx_period;
     int     m_rsi_period;
     
     // Indicator handles
+    int     m_macd_handle;
     int     m_cci_handle;
     int     m_adx_handle;
     int     m_rsi_handle;
     
 public:
-    CIndicatorChart(int cci_period = 100, int adx_period = 14, int rsi_period = 14);
+    CIndicatorChart(int macd_fast = 5, int macd_slow = 35, int macd_signal = 9,
+                   int cci_period = 100, int adx_period = 14, int rsi_period = 10);
     ~CIndicatorChart();
     
     bool AddAllIndicators();
     void RemoveAllIndicators();
+    bool AddMACD();
     bool AddCCI();
     bool AddADX();
     bool AddRSI();
@@ -40,6 +47,7 @@ public:
     void AddSignalMarkers();
     
     // Utility methods
+    int GetMACDWindow() { return m_macd_window; }
     int GetCCIWindow() { return m_cci_window; }
     int GetADXWindow() { return m_adx_window; }
     int GetRSIWindow() { return m_rsi_window; }
@@ -48,19 +56,25 @@ public:
 //+------------------------------------------------------------------+
 //| Constructor                                                      |
 //+------------------------------------------------------------------+
-CIndicatorChart::CIndicatorChart(int cci_period = 100, int adx_period = 14, int rsi_period = 14)
+CIndicatorChart::CIndicatorChart(int macd_fast = 5, int macd_slow = 35, int macd_signal = 9,
+                                int cci_period = 100, int adx_period = 14, int rsi_period = 10)
 {
     m_chart_id = ChartID();
+    m_macd_window = -1;
     m_cci_window = -1;
     m_adx_window = -1;
     m_rsi_window = -1;
     
     // Initialize handles
+    m_macd_handle = INVALID_HANDLE;
     m_cci_handle = INVALID_HANDLE;
     m_adx_handle = INVALID_HANDLE;
     m_rsi_handle = INVALID_HANDLE;
     
     // Store custom parameters
+    m_macd_fast = macd_fast;
+    m_macd_slow = macd_slow;
+    m_macd_signal = macd_signal;
     m_cci_period = cci_period;
     m_adx_period = adx_period;
     m_rsi_period = rsi_period;
@@ -74,6 +88,8 @@ CIndicatorChart::~CIndicatorChart()
     RemoveAllIndicators();
     
     // Release indicator handles
+    if(m_macd_handle != INVALID_HANDLE)
+        IndicatorRelease(m_macd_handle);
     if(m_cci_handle != INVALID_HANDLE)
         IndicatorRelease(m_cci_handle);
     if(m_adx_handle != INVALID_HANDLE)
@@ -91,6 +107,12 @@ bool CIndicatorChart::AddAllIndicators()
     
     Print("Adding indicators to chart...");
     
+    // Add MACD
+    if(!AddMACD())
+    {
+        Print("Failed to add MACD to chart");
+        success = false;
+    }
     
     // Add CCI
     if(!AddCCI())
@@ -125,6 +147,7 @@ bool CIndicatorChart::AddAllIndicators()
     if(success)
     {
         Print("=== Chart Indicators Successfully Added ===");
+        Print("- MACD(", m_macd_fast, ",", m_macd_slow, ",", m_macd_signal, ") in window ", m_macd_window);
         Print("- CCI(", m_cci_period, ") in window ", m_cci_window);
         Print("- ADX(", m_adx_period, ") in window ", m_adx_window);
         Print("- RSI(", m_rsi_period, ") in window ", m_rsi_window);
@@ -149,7 +172,14 @@ void CIndicatorChart::RemoveAllIndicators()
     ObjectDelete(m_chart_id, "RSI_CN");
     ObjectDelete(m_chart_id, "RSI_OS");
     ObjectDelete(m_chart_id, "ADX_20");
-
+    ObjectDelete(m_chart_id, "MACD_Zero");
+    
+    // Remove indicators from windows
+    if(m_macd_window >= 0)
+    {
+        ChartIndicatorDelete(m_chart_id, m_macd_window, "MACD");
+        m_macd_window = -1;
+    }
     
     if(m_cci_window >= 0)
     {
@@ -174,6 +204,37 @@ void CIndicatorChart::RemoveAllIndicators()
 }
 
 //+------------------------------------------------------------------+
+//| Add MACD indicator                                              |
+//+------------------------------------------------------------------+
+bool CIndicatorChart::AddMACD()
+{
+    // Create MACD indicator handle
+    m_macd_handle = iMACD(Symbol(), PERIOD_CURRENT, m_macd_fast, m_macd_slow, m_macd_signal, PRICE_CLOSE);
+    if(m_macd_handle == INVALID_HANDLE)
+    {
+        Print("Failed to create MACD handle");
+        return false;
+    }
+    
+    // Add indicator to chart window
+    m_macd_window = ChartIndicatorAdd(m_chart_id, 1, m_macd_handle);
+    
+    if(m_macd_window >= 0)
+    {
+        // Set window name
+        string window_name = "MACD(" + IntegerToString(m_macd_fast) + "," + 
+                            IntegerToString(m_macd_slow) + "," + 
+                            IntegerToString(m_macd_signal) + ")";
+        
+        Print("MACD(", m_macd_fast, ",", m_macd_slow, ",", m_macd_signal, ") added to window ", m_macd_window);
+        return true;
+    }
+    
+    Print("Failed to add MACD to chart window");
+    return false;
+}
+
+//+------------------------------------------------------------------+
 //| Add CCI indicator                                               |
 //+------------------------------------------------------------------+
 bool CIndicatorChart::AddCCI()
@@ -187,7 +248,7 @@ bool CIndicatorChart::AddCCI()
     }
     
     // Add indicator to chart window
-    m_cci_window = ChartIndicatorAdd(m_chart_id, 1, m_cci_handle);
+    m_cci_window = ChartIndicatorAdd(m_chart_id, 2, m_cci_handle);
     
     if(m_cci_window >= 0)
     {
@@ -213,7 +274,7 @@ bool CIndicatorChart::AddRSI()
     }
     
     // Add indicator to chart window
-    m_rsi_window = ChartIndicatorAdd(m_chart_id, 2, m_rsi_handle);
+    m_rsi_window = ChartIndicatorAdd(m_chart_id, 3, m_rsi_handle);
     
     if(m_rsi_window >= 0)
     {
@@ -239,13 +300,13 @@ bool CIndicatorChart::AddADX()
     }
     
     // Add indicator to chart window
-    m_adx_window = ChartIndicatorAdd(m_chart_id, 3, m_adx_handle);
+    /*m_adx_window = ChartIndicatorAdd(m_chart_id, 4, m_adx_handle);
     
     if(m_adx_window >= 0)
     {
         Print("ADX(", m_adx_period, ") added to window ", m_adx_window);
         return true;
-    }
+    }*/
     
     Print("Failed to add ADX to chart window");
     return false;
@@ -257,6 +318,21 @@ bool CIndicatorChart::AddADX()
 void CIndicatorChart::AddLevelLines()
 {
     Print("Adding level lines to indicators...");
+    
+    // MACD Zero Line
+    if(m_macd_window >= 0)
+    {
+        string macd_zero_name = "MACD_Zero";
+        ObjectDelete(m_chart_id, macd_zero_name);
+        
+        if(ObjectCreate(m_chart_id, macd_zero_name, OBJ_HLINE, m_macd_window, 0, 0))
+        {
+            ObjectSetInteger(m_chart_id, macd_zero_name, OBJPROP_COLOR, clrGray);
+            ObjectSetInteger(m_chart_id, macd_zero_name, OBJPROP_STYLE, STYLE_DOT);
+            ObjectSetInteger(m_chart_id, macd_zero_name, OBJPROP_WIDTH, 1);
+            ObjectSetString(m_chart_id, macd_zero_name, OBJPROP_TEXT, "Zero Line");
+        }
+    }
     
     // CCI levels (+100, 0, -100)
     if(m_cci_window >= 0)

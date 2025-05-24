@@ -5,3 +5,6 @@
 !Include/TrendReversal/**
 !Experts/
 !Experts/TrendReversalEA.mq5
+!Experts/MA.mq5
+!Indicators/
+!Indicators/Dual_MA_Indicator.mq5

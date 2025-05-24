@@ -32,7 +32,8 @@ class CTradeManager
 private:
     CTrade   m_trade;
     int      m_magic_number;
-    double   m_lot_size;
+    double   m_lot_size, m_cur_lot_size, m_init_lot_size;
+    double   m_max_lot_size;
     int      m_max_positions;
     int      m_max_positions_per_symbol; // Added for per-symbol limit
     bool     m_allow_hedging;
@@ -62,6 +63,25 @@ private:
     bool     CanTrade(ENUM_SIGNAL_TYPE signal);
     void     UpdateSymbolPositionCounts();
     bool     CheckSymbolPositionLimits(string symbol, ENUM_SIGNAL_TYPE signal);
+	double   getProfit(){
+        // Open position
+        HistorySelect(0, TimeCurrent());
+        int total_deals = HistoryDealsTotal();
+        double profit = 0;
+        // Check for existing deals and adjust lot size based on profit
+        for (int i = total_deals - 1; i >= total_deals - 5 && i > 0; i--) {
+            ulong deal_ticket = HistoryDealGetTicket(i);
+            long entryType = HistoryDealGetInteger(deal_ticket, DEAL_ENTRY);
+            if (deal_ticket > 0 && entryType == DEAL_ENTRY_OUT) {
+                string deal_symbol = HistoryDealGetString(deal_ticket, DEAL_SYMBOL);
+                if (deal_symbol == _Symbol) {
+                    profit = HistoryDealGetDouble(deal_ticket, DEAL_PROFIT);
+                    break;
+                }
+            }
+        }
+        return profit;
+    }
 
 public:
     CTradeManager(int magic_number, double lot_size, int max_positions = 4, bool allow_hedging = true, bool lock2TradingFail = true);
@@ -104,7 +124,7 @@ public:
 CTradeManager::CTradeManager(int magic_number, double lot_size, int max_positions = 4, bool allow_hedging = true, bool lock2TradingFail = true)
 {
     m_magic_number = magic_number;
-    m_lot_size = lot_size;
+    m_lot_size =  m_cur_lot_size = m_init_lot_size = lot_size;
     m_max_positions = max_positions;
     m_max_positions_per_symbol = 2; // Default to 2 positions per symbol
     m_allow_hedging = allow_hedging;
@@ -153,17 +173,34 @@ bool CTradeManager::OpenPosition(ENUM_SIGNAL_TYPE signal, double stop_loss = 0, 
     string comment = "";
     bool result = false;
     
+    bool isLoss = getProfit() < 0;
+    if(isLoss)
+    {
+        m_cur_lot_size = m_cur_lot_size;// * 2;
+    }
+    else
+    {
+        m_cur_lot_size = m_lot_size;
+    }
     // Prepare trade parameters
     switch(signal)
     {
         case SIGNAL_BUY_ENTRY:
             comment = "TrendReversal Buy Entry";
-            result = m_trade.Buy(m_lot_size, symbol, 0, stop_loss, take_profit, comment);
+            result = m_trade.Buy(m_cur_lot_size, symbol, 0, stop_loss, take_profit, comment);
+            if(!result)
+            {
+                m_cur_lot_size = m_lot_size;
+            }
             break;
             
         case SIGNAL_SELL_ENTRY:
             comment = "TrendReversal Sell Entry";
-            result = m_trade.Sell(m_lot_size, symbol, 0, stop_loss, take_profit, comment);
+            result = m_trade.Sell(m_cur_lot_size, symbol, 0, stop_loss, take_profit, comment);
+            if(!result)
+            {
+                m_cur_lot_size = m_lot_size;
+            }
             break;
             
         default:
@@ -246,7 +283,7 @@ void CTradeManager::ManagePositions(CSignalAnalyzer *signal_analyzer, bool enabl
             return;
         
         // Check signal-based exit
-        if(enable_signal_exit && (signal == SIGNAL_BUY_EXIT || signal == SIGNAL_SELL_ENTRY))
+        if(enable_signal_exit && signal == SIGNAL_BUY_EXIT)
         {
             should_close = true;
             close_reason = "Buy exit signal detected";
@@ -311,7 +348,7 @@ void CTradeManager::ManagePositions(CSignalAnalyzer *signal_analyzer, bool enabl
             return;
         
         // Check signal-based exit
-        if(enable_signal_exit && (signal == SIGNAL_SELL_EXIT || signal == SIGNAL_BUY_ENTRY))
+        if(enable_signal_exit && signal == SIGNAL_SELL_EXIT)
         {
             should_close = true;
             close_reason = "Sell exit signal detected";
@@ -859,8 +896,8 @@ bool CTradeManager::ValidateTradeRequest(ENUM_SIGNAL_TYPE signal)
         }
     }
     
-    //if(!CanTrade(signal) && m_lock2TradingFail)
-    //    return false;
+    if(!CanTrade(signal) && m_lock2TradingFail)
+        return false;
         
     return true;
 }

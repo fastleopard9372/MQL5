@@ -16,7 +16,7 @@ private:
     double   m_max_positions;
     
 public:
-    CRiskManager();
+    CRiskManager(double max_risk_percent = 2.0);
     ~CRiskManager();
     
     bool CheckRiskLimits(int current_positions);
@@ -25,6 +25,7 @@ public:
     double CalculatePositionSize(double stop_loss_pips, double risk_percent);
     
     // Risk parameter setters
+    void SetMaxRiskPercent(double risk_percent) { m_max_risk_percent = risk_percent; }
     void SetMaxPositions(int max_positions) { m_max_positions = max_positions; }
     
     // Risk validation methods
@@ -39,8 +40,9 @@ public:
 //+------------------------------------------------------------------+
 //| Constructor                                                      |
 //+------------------------------------------------------------------+
-CRiskManager::CRiskManager()
+CRiskManager::CRiskManager(double max_risk_percent = 2.0)
 {
+    m_max_risk_percent = max_risk_percent;
     m_max_positions = 2;       // Maximum 2 positions as per strategy
 }
 
