@@ -237,7 +237,7 @@ bool CSignalAnalyzer::CheckBuyEntryConditions()
     bool condition2 = m_macd_signal_curr < 0;
     bool condition3 = MathAbs(m_macd_main_curr) > m_macd_min_value;
     bool condition4 = m_rsi_curr < m_rsi_buy_max;
-    bool condition5 = m_macd_main_curr > m_macd_signal_curr;
+    bool condition5 = (m_rsi_curr < m_rsi_buy_oversold || m_macd_main_curr > m_macd_signal_curr);
     bool condition6 = !m_enable_slope_analysis || m_cci_prev < m_cci_curr;
     bool condition7 = !m_enable_slope_analysis || m_rsi_prev < m_rsi_curr;
     bool condition8 = m_adx_curr > m_adx_min_strength && (!m_enable_slope_analysis || m_adx_prev > m_adx_curr);
@@ -266,7 +266,7 @@ bool CSignalAnalyzer::CheckBuyExitConditions()
     
     bool condition1 = m_cci_curr > m_cci_exit_overbought;
     bool condition2 = m_macd_signal_curr > 0;
-    bool condition3 = m_rsi_curr > m_rsi_exit_sell_overbought || m_macd_main_curr < m_macd_signal_curr;
+    bool condition3 = m_rsi_curr > m_rsi_exit_sell_min && (m_rsi_curr > m_rsi_exit_sell_overbought || m_macd_main_curr < m_macd_signal_curr);
     bool condition4 = !m_enable_slope_analysis || m_cci_prev > m_cci_curr;
     bool condition5 = !m_enable_slope_analysis || m_rsi_prev > m_rsi_curr;
     
@@ -296,7 +296,7 @@ bool CSignalAnalyzer::CheckSellEntryConditions()
     bool condition2 = m_macd_signal_curr > 0 && MathAbs(m_macd_main_curr) > m_macd_min_value;
     bool condition3 = MathAbs(m_macd_main_curr) > m_macd_min_value;
     bool condition4 = m_rsi_curr > m_rsi_sell_min;
-    bool condition5 = m_macd_main_curr < m_macd_signal_curr;
+    bool condition5 = (m_rsi_curr > m_rsi_sell_overbought || m_macd_main_curr < m_macd_signal_curr);
     bool condition6 = !m_enable_slope_analysis || m_cci_prev > m_cci_curr;
     bool condition7 = !m_enable_slope_analysis || m_rsi_prev > m_rsi_curr;
     bool condition8 = m_adx_curr > m_adx_min_strength && (!m_enable_slope_analysis || m_adx_prev < m_adx_curr);
@@ -324,7 +324,7 @@ bool CSignalAnalyzer::CheckSellExitConditions()
     
     bool condition1 = m_cci_curr < m_cci_exit_oversold;
     bool condition2 = m_macd_signal_curr < 0;
-    bool condition3 = m_rsi_curr < m_rsi_exit_buy_oversold || m_macd_main_curr > m_macd_signal_curr;
+    bool condition3 = m_rsi_curr < m_rsi_exit_buy_max && (m_rsi_curr < m_rsi_exit_buy_oversold || m_macd_main_curr > m_macd_signal_curr);
     bool condition4 = !m_enable_slope_analysis || m_cci_prev < m_cci_curr;
     bool condition5 = !m_enable_slope_analysis || m_rsi_prev < m_rsi_curr;
     

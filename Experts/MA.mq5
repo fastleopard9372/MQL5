@@ -196,16 +196,16 @@ void OnTick()
     }
     
     // Check main trend condition
-    bool mainTrendBullish = (trendLong[0] > trendShort[0]);
-    bool mainTrendBearish = (trendLong[0] < trendShort[0]);
+    bool mainTrendBullish = (trendLong[0] <= trendShort[0]);
+    bool mainTrendBearish = (trendLong[0] >= trendShort[0]);
     
     // Check signal conditions
-    bool signalBullish = (signalLong[0] > signalShort[0]);
-    bool signalBearish = (signalLong[0] < signalShort[0]);
+    bool signalBullish = (signalLong[0] <= signalShort[0]);
+    bool signalBearish = (signalLong[0] >= signalShort[0]);
     
     // Check for crossovers
-    bool bullishCross = (signalLong[1] <= signalShort[1] && signalBullish);
-    bool bearishCross = (signalLong[1] >= signalShort[1] && signalBearish);
+    bool bullishCross = (signalLong[2] >= signalShort[2] && signalLong[1] >= signalShort[1] && signalBullish);
+    bool bearishCross = (signalLong[2] <= signalShort[2] && signalLong[1] <= signalShort[1] && signalBearish);
     
     // Check daily trade limit
     if(MaxDailyTrades > 0 && dailyTradeCount >= MaxDailyTrades)
@@ -214,7 +214,7 @@ void OnTick()
     }
     
     // Trading logic
-    if(TradeMode != MODE_SELL_ONLY && mainTrendBullish && bullishCross)
+    if(TradeMode != MODE_SELL_ONLY && mainTrendBullish  && bullishCross)
     {
         // Close opposite positions
         ClosePositions(POSITION_TYPE_SELL);
@@ -232,7 +232,7 @@ void OnTick()
             }
         }
     }
-    else if(TradeMode != MODE_BUY_ONLY && mainTrendBearish && bearishCross)
+    else if(TradeMode != MODE_BUY_ONLY  && mainTrendBearish && bearishCross)
     {
         // Close opposite positions
         ClosePositions(POSITION_TYPE_BUY);
