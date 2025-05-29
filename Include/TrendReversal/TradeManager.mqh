@@ -7,6 +7,7 @@
 #property link      "https://www.mql5.com"
 
 #include <Trade\Trade.mqh>
+#include "RiskManager.mqh"
 
 //--- Position information structure
 struct SPositionInfo
@@ -39,6 +40,7 @@ private:
     bool     m_allow_hedging;
     bool     m_lock2TradingFail;
     TradeLock lockState;
+    CMarketConditionFilter *m_market_filter;
 
     SPositionInfo m_buy_positions[];
     SPositionInfo m_sell_positions[];
@@ -84,7 +86,7 @@ private:
     }
 
 public:
-    CTradeManager(int magic_number, double lot_size, int max_positions = 4, bool allow_hedging = true, bool lock2TradingFail = true);
+    CTradeManager(int magic_number, double lot_size, int max_positions = 4, bool allow_hedging = true, bool lock2TradingFail = true, double maxSpreadPips = 0.4);
     ~CTradeManager();
     
     // Main trading methods
@@ -115,13 +117,18 @@ public:
     
     // Validation methods
     bool ValidateTradeRequest(ENUM_SIGNAL_TYPE signal);
+    bool WaitForFavorableEntry(ENUM_SIGNAL_TYPE signal);
     bool CheckTradingConditions();
+
+    void setMaxSpread(double max_spread_pips = 0.2) {
+        m_market_filter.SetMaxSpreadPips(max_spread_pips);
+    }
 };
 
 //+------------------------------------------------------------------+
 //| Constructor                                                      |
 //+------------------------------------------------------------------+
-CTradeManager::CTradeManager(int magic_number, double lot_size, int max_positions = 4, bool allow_hedging = true, bool lock2TradingFail = true)
+CTradeManager::CTradeManager(int magic_number, double lot_size, int max_positions = 4, bool allow_hedging = true, bool lock2TradingFail = true, double maxSpreadPips = 0.4)
 {
     m_magic_number = magic_number;
     m_lot_size =  m_cur_lot_size = m_init_lot_size = lot_size;
@@ -135,6 +142,8 @@ CTradeManager::CTradeManager(int magic_number, double lot_size, int max_position
     m_trade.SetExpertMagicNumber(m_magic_number);
     m_trade.SetDeviationInPoints(10);
     m_trade.SetTypeFilling(ORDER_FILLING_FOK);
+
+    m_market_filter = new CMarketConditionFilter(maxSpreadPips);
     
     lockState = LOCK_NONE;
     
@@ -161,6 +170,14 @@ CTradeManager::~CTradeManager()
 //+------------------------------------------------------------------+
 bool CTradeManager::OpenPosition(ENUM_SIGNAL_TYPE signal, double stop_loss = 0, double take_profit = 0)
 {
+    // Add market condition check
+    if(!m_market_filter.IsGoodTradingCondition())
+        return false;
+    
+    // Wait for price to move in your favor before entry (reduce slippage)
+    if(!WaitForFavorableEntry(signal))
+        return false;
+
     // Validate trade request
     if(!ValidateTradeRequest(signal))
         return false;
@@ -171,6 +188,7 @@ bool CTradeManager::OpenPosition(ENUM_SIGNAL_TYPE signal, double stop_loss = 0, 
     
     string symbol = Symbol();
     string comment = "";
+    double entry_price = 0;
     bool result = false;
     
     bool isLoss = getProfit() < 0;
@@ -187,6 +205,8 @@ bool CTradeManager::OpenPosition(ENUM_SIGNAL_TYPE signal, double stop_loss = 0, 
     {
         case SIGNAL_BUY_ENTRY:
             comment = "TrendReversal Buy Entry";
+            entry_price = SymbolInfoDouble(Symbol(), SYMBOL_BID);
+            //result = m_trade.BuyLimit(m_lot_size, entry_price, Symbol(), stop_loss, take_profit, ORDER_TIME_GTC, 0, "TrendReversal Buy");
             result = m_trade.Buy(m_cur_lot_size, symbol, 0, stop_loss, take_profit, comment);
             if(!result)
             {
@@ -196,7 +216,11 @@ bool CTradeManager::OpenPosition(ENUM_SIGNAL_TYPE signal, double stop_loss = 0, 
             
         case SIGNAL_SELL_ENTRY:
             comment = "TrendReversal Sell Entry";
+            entry_price = SymbolInfoDouble(Symbol(), SYMBOL_ASK);
+            //result = m_trade.SellLimit(m_lot_size, entry_price, Symbol(), stop_loss, take_profit, ORDER_TIME_GTC, 0, "TrendReversal Sell");
             result = m_trade.Sell(m_cur_lot_size, symbol, 0, stop_loss, take_profit, comment);
+    
+            
             if(!result)
             {
                 m_cur_lot_size = m_lot_size;
@@ -237,6 +261,33 @@ bool CTradeManager::OpenPosition(ENUM_SIGNAL_TYPE signal, double stop_loss = 0, 
     }
     
     return result;
+}
+
+
+bool CTradeManager::WaitForFavorableEntry(ENUM_SIGNAL_TYPE signal)
+{
+    double ask = SymbolInfoDouble(Symbol(), SYMBOL_ASK);
+    double bid = SymbolInfoDouble(Symbol(), SYMBOL_BID);
+    double spread = ask - bid;
+    
+    // For buy signals, wait for price to pull back slightly
+    if(signal == SIGNAL_BUY_ENTRY)
+    {
+        // Wait for a small pullback to get better entry
+        Sleep(200); // Brief delay
+        double new_ask = SymbolInfoDouble(Symbol(), SYMBOL_ASK);
+        return new_ask <= ask + spread; // Don't chase price up
+    }
+    
+    // Similar logic for sell signals
+    if(signal == SIGNAL_SELL_ENTRY)
+    {
+        Sleep(200);
+        double new_bid = SymbolInfoDouble(Symbol(), SYMBOL_BID);
+        return new_bid >= bid - spread; // Don't chase price down
+    }
+    
+    return true;
 }
 
 //+------------------------------------------------------------------+
@@ -840,13 +891,13 @@ bool CTradeManager::CheckSymbolPositionLimits(string symbol, ENUM_SIGNAL_TYPE si
     {
         if(signal == SIGNAL_BUY_ENTRY && m_symbol_positions[symbol_index].buy_count > 0)
         {
-            Print("Trade rejected: Cannot open second buy position for symbol ", symbol);
+            // Print("Trade rejected: Cannot open second buy position for symbol ", symbol);
             return false;
         }
         
         if(signal == SIGNAL_SELL_ENTRY && m_symbol_positions[symbol_index].sell_count > 0)
         {
-            Print("Trade rejected: Cannot open second sell position for symbol ", symbol);
+            // Print("Trade rejected: Cannot open second sell position for symbol ", symbol);
             return false;
         }
     }

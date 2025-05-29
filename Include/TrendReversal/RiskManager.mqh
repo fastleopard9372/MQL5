@@ -6,6 +6,63 @@
 #property copyright "Copyright 2025, MetaQuotes Software Corp."
 #property link      "https://www.mql5.com"
 
+
+class CMarketConditionFilter
+{
+private:
+    double   m_max_spread_pips;
+    double   m_min_volume;
+    bool     m_avoid_news_times;
+    
+public:
+    CMarketConditionFilter(double max_spread_pips = 0.4)
+    {
+        m_max_spread_pips = max_spread_pips;
+        m_min_volume = 0;
+        m_avoid_news_times = false;
+    }
+    bool IsGoodTradingCondition()
+    {
+        datetime current_time = TimeCurrent();
+        MqlDateTime time_struct;
+        TimeToStruct(current_time, time_struct);
+        
+        int hour = time_struct.hour; // GMT hour
+        
+        // London session: 7-16 GMT
+        // New York session: 12-21 GMT  
+        // Overlap: 12-16 GMT (best liquidity)
+        
+        if(hour >= 12 && hour <= 16){
+            //return true;
+        }else{
+         //   return false;
+        }
+            
+        // Check spread
+        double spread = (SymbolInfoDouble(Symbol(), SYMBOL_ASK) - 
+                        SymbolInfoDouble(Symbol(), SYMBOL_BID)) / 
+                        (SymbolInfoDouble(Symbol(), SYMBOL_POINT) * 10);
+        if(spread > m_max_spread_pips)
+        {
+            Print("Trading blocked - High spread: ", spread, " pips");
+            return false;
+        }
+        
+        // Check volatility (avoid extremely quiet or volatile periods)
+        double atr = iATR(Symbol(), PERIOD_CURRENT, 14);
+        double atr_value[];
+        if(CopyBuffer(atr, 0, 0, 1, atr_value) <= 0)
+            return false;
+        // Add your volatility filters here
+        
+        return true;
+    }
+    
+    // Or add a setter method
+    void SetMaxSpreadPips(double max_spread) { m_max_spread_pips = max_spread; }
+};
+
 //+------------------------------------------------------------------+
 //| Risk manager class for position risk management                  |
 //+------------------------------------------------------------------+
@@ -35,6 +92,7 @@ public:
     // Utility methods
     double GetPipSize();
     double GetPointValue();
+    double GetATR(int period, int shift);
 };
 
 //+------------------------------------------------------------------+
@@ -103,30 +161,74 @@ bool CRiskManager::CheckRiskLimits(int current_positions)
     return true;
 }
 
+
+double CRiskManager::GetATR(int period, int shift)
+{
+    int atr_handle = iATR(Symbol(), PERIOD_CURRENT, period);
+    if(atr_handle == INVALID_HANDLE)
+    {
+        Print("Failed to create ATR indicator");
+        return 0.0;
+    }
+    
+    double atr_value[];
+    ArraySetAsSeries(atr_value, true);
+    
+    // Wait for indicator to calculate
+    if(CopyBuffer(atr_handle, 0, shift, 1, atr_value) <= 0)
+    {
+        Print("Failed to copy ATR buffer");
+        IndicatorRelease(atr_handle);
+        return 0.0;
+    }
+    
+    double result = atr_value[0];
+    IndicatorRelease(atr_handle);
+    
+    return result;
+}
+
 //+------------------------------------------------------------------+
 //| Calculate stop loss level                                       |
 //+------------------------------------------------------------------+
+// Add dynamic stop loss adjustment
 double CRiskManager::CalculateStopLoss(ENUM_SIGNAL_TYPE signal_type, int stop_loss_pips)
 {
     if(stop_loss_pips <= 0)
         return 0.0;
     
-    double current_price = 0;
     double pip_size = GetPipSize();
+    double atr_value = GetATR(14, 0); // Current ATR
+    
+    // Adjust stop loss based on volatility
+    double volatility_multiplier = MathMax(1.0, atr_value / (20 * pip_size)); // Adjust based on ATR
+    int adjusted_sl_pips = (int)(stop_loss_pips * volatility_multiplier);
+    
+    // Ensure minimum distance from current price
+    double min_stop_distance = SymbolInfoInteger(Symbol(), SYMBOL_TRADE_STOPS_LEVEL) * 
+                              SymbolInfoDouble(Symbol(), SYMBOL_POINT);
+    
+    double calculated_sl = 0;
+    double current_price = 0;
     
     switch(signal_type)
     {
         case SIGNAL_BUY_ENTRY:
             current_price = SymbolInfoDouble(Symbol(), SYMBOL_ASK);
-            return current_price - (stop_loss_pips * pip_size);
+            calculated_sl = current_price - (adjusted_sl_pips * pip_size);
+            // Ensure minimum distance
+            calculated_sl = MathMin(calculated_sl, current_price - min_stop_distance);
+            break;
             
         case SIGNAL_SELL_ENTRY:
             current_price = SymbolInfoDouble(Symbol(), SYMBOL_BID);
-            return current_price + (stop_loss_pips * pip_size);
-            
-        default:
-            return 0.0;
+            calculated_sl = current_price + (adjusted_sl_pips * pip_size);
+            // Ensure minimum distance
+            calculated_sl = MathMax(calculated_sl, current_price + min_stop_distance);
+            break;
     }
+    
+    return calculated_sl;
 }
 
 //+------------------------------------------------------------------+

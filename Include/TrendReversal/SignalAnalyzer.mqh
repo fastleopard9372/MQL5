@@ -58,7 +58,14 @@ private:
     int      m_slope_lookback;
     bool     m_strict_conditions;
     bool     m_log_detailed_info;
+
+    int      m_signal_confirmation_bars;
+    int      m_last_signal_bar;
+    ENUM_SIGNAL_TYPE m_pending_signal;
+    int      m_signal_stability_count;
     
+    ENUM_SIGNAL_TYPE     CheckSignalStability(ENUM_SIGNAL_TYPE signal);
+    bool     IsNewBar();
     // Private helper methods
     bool CheckBuyEntryConditions();
     bool CheckBuyExitConditions();
@@ -112,6 +119,8 @@ CSignalAnalyzer::CSignalAnalyzer()
     m_slope_lookback = 2;
     m_strict_conditions = true;
     m_log_detailed_info = false;
+
+    m_signal_confirmation_bars = 2;
 }
 
 //+------------------------------------------------------------------+
@@ -203,17 +212,56 @@ ENUM_SIGNAL_TYPE CSignalAnalyzer::AnalyzeSignal()
     if(!m_data_ready)
         return SIGNAL_NONE;
     
+    // Only process signals on new bars to avoid tick noise
+    // if(!IsNewBar())
+    //     return SIGNAL_NONE;
+    
+    ENUM_SIGNAL_TYPE current_signal = SIGNAL_NONE;
+    
     if(CheckBuyEntryConditions())
-        return SIGNAL_BUY_ENTRY;
+        current_signal = SIGNAL_BUY_ENTRY;
+    else if(CheckSellEntryConditions())
+        current_signal = SIGNAL_SELL_ENTRY;
+    else if(CheckBuyExitConditions())
+        current_signal = SIGNAL_BUY_EXIT;
+    else if(CheckSellExitConditions())
+        current_signal = SIGNAL_SELL_EXIT;
     
-    if(CheckSellEntryConditions())
-        return SIGNAL_SELL_ENTRY;
+    // Confirm signal stability across multiple bars
+    return CheckSignalStability(current_signal);
+}
+
+bool CSignalAnalyzer::IsNewBar()
+{
+    static datetime last_bar_time = 0;
+    datetime current_bar_time = iTime(Symbol(), PERIOD_CURRENT, 0);
     
-    if(CheckBuyExitConditions())
-        return SIGNAL_BUY_EXIT;
+    if(current_bar_time != last_bar_time)
+    {
+        last_bar_time = current_bar_time;
+        return true;
+    }
+    return false;
+}
+
+ENUM_SIGNAL_TYPE CSignalAnalyzer::CheckSignalStability(ENUM_SIGNAL_TYPE signal)
+{
+    if(signal == m_pending_signal)
+    {
+        m_signal_stability_count++;
+    }
+    else
+    {
+        m_pending_signal = signal;
+        m_signal_stability_count = 1;
+    }
     
-    if(CheckSellExitConditions())
-        return SIGNAL_SELL_EXIT;
+    // Require signal to be stable for at least 2-3 bars
+    if(m_signal_stability_count >= m_signal_confirmation_bars && signal != SIGNAL_NONE)
+    {
+        m_signal_stability_count = 0;
+        return signal;
+    }
     
     return SIGNAL_NONE;
 }
@@ -242,14 +290,9 @@ bool CSignalAnalyzer::CheckBuyEntryConditions()
     bool condition7 = !m_enable_slope_analysis || m_rsi_prev < m_rsi_curr;
     bool condition8 = m_adx_curr > m_adx_min_strength && (!m_enable_slope_analysis || m_adx_prev > m_adx_curr);
     
-    if(m_log_detailed_info)
-    {
-        Print("Buy Entry Check - CCI:", condition1, " MACD Signal:", condition2, " MACD Min:", condition3, 
-              " RSI Max:", condition4, " RSI/MACD:", condition5, " CCI Slope:", condition6, 
-              " RSI Slope:", condition7, " ADX:", condition8);
-    }
+    bool basic_conditions = (condition1 && condition2 && condition3 && condition4 && condition5 && condition6 && condition7 && condition8);
     
-    return condition1 && condition2 && condition3 && condition4 && condition5 && condition6 && condition7 && condition8;
+    return basic_conditions;
 }
 
 //+------------------------------------------------------------------+

@@ -104,7 +104,7 @@ CIndicatorChart::~CIndicatorChart()
 bool CIndicatorChart::AddAllIndicators()
 {
     bool success = true;
-    
+    return success;
     Print("Adding indicators to chart...");
     
     // Add MACD
