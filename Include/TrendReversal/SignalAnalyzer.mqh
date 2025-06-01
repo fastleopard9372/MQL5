@@ -16,6 +16,14 @@ enum ENUM_SIGNAL_TYPE
     SIGNAL_SELL_EXIT  = 4
 };
 
+//--- Trend direction enumeration
+enum ENUM_TREND_DIRECTION
+{
+    TREND_NEUTRAL = 0,
+    TREND_UP      = 1,
+    TREND_DOWN    = -1
+};
+
 //+------------------------------------------------------------------+
 //| Signal analyzer class for trend reversal detection               |
 //+------------------------------------------------------------------+
@@ -32,8 +40,22 @@ private:
     double   m_adx_prev;
     double   m_rsi_curr;
     double   m_rsi_prev;
-    
+    double   m_price_prev;
+    double   m_price_curr;
+
     bool     m_data_ready;
+    
+    // High TF Trend Filter variables
+    int      m_ma_fast_handle;
+    int      m_ma_slow_handle;
+    
+    bool     m_trend_filter_enabled;
+    bool     m_trend_filter_initialized;
+    ENUM_TREND_DIRECTION m_current_trend;
+    
+    // Moving Average parameters for trend filter
+    int      m_ma_fast_period;
+    int      m_ma_slow_period;
     
     // Strategy parameters
     double   m_cci_oversold;
@@ -58,29 +80,32 @@ private:
     int      m_slope_lookback;
     bool     m_strict_conditions;
     bool     m_log_detailed_info;
-
-    int      m_signal_confirmation_bars;
-    int      m_last_signal_bar;
-    ENUM_SIGNAL_TYPE m_pending_signal;
-    int      m_signal_stability_count;
     
-    ENUM_SIGNAL_TYPE     CheckSignalStability(ENUM_SIGNAL_TYPE signal);
-    bool     IsNewBar();
     // Private helper methods
     bool CheckBuyEntryConditions();
     bool CheckBuyExitConditions();
     bool CheckSellEntryConditions();
     bool CheckSellExitConditions();
+    ENUM_TREND_DIRECTION AnalyzeTrend();
+    bool IsTrendAligned(ENUM_SIGNAL_TYPE signal_type);
     
 public:
     CSignalAnalyzer();
     ~CSignalAnalyzer();
     
     void SetIndicatorData(double macd_main, double macd_signal, double cci, double adx, double rsi);
+    void SetPrevIndicatorData(double macd_main, double macd_signal, double cci, double adx, double rsi);
+    bool InitializeTrendFilter(ENUM_TIMEFRAMES high_tf = PERIOD_M30);
     void SetHistoricalData(double macd_main_prev, double macd_signal_prev, 
                           double cci_prev, double adx_prev, double rsi_prev);
     
     ENUM_SIGNAL_TYPE AnalyzeSignal();
+    
+    // Trend filter methods
+    bool EnableTrendFilter(int ma_fast_period = 8, int ma_slow_period = 15);
+    void DisableTrendFilter();
+    ENUM_TREND_DIRECTION GetCurrentTrend() { return m_current_trend; }
+    string GetTrendDescription();
     
     // Parameter setting methods
     void SetBuyEntryConditions(double cci_oversold, double macd_min_value, double rsi_buy_max, 
@@ -94,6 +119,7 @@ public:
     
     // Getter methods for current signal conditions
     bool IsDataReady() { return m_data_ready; }
+    bool IsTrendFilterEnabled() { return m_trend_filter_enabled; }
     string GetSignalDescription(ENUM_SIGNAL_TYPE signal);
 };
 
@@ -103,6 +129,15 @@ public:
 CSignalAnalyzer::CSignalAnalyzer()
 {
     m_data_ready = false;
+    
+    // Initialize trend filter variables
+    m_ma_fast_handle = INVALID_HANDLE;
+    m_ma_slow_handle = INVALID_HANDLE;
+    m_trend_filter_enabled = false;
+    m_trend_filter_initialized = false;
+    m_current_trend = TREND_NEUTRAL;
+    m_ma_fast_period = 8;
+    m_ma_slow_period = 15;
     
     // Default strategy parameters
     m_cci_oversold = -100;
@@ -119,8 +154,6 @@ CSignalAnalyzer::CSignalAnalyzer()
     m_slope_lookback = 2;
     m_strict_conditions = true;
     m_log_detailed_info = false;
-
-    m_signal_confirmation_bars = 2;
 }
 
 //+------------------------------------------------------------------+
@@ -128,6 +161,218 @@ CSignalAnalyzer::CSignalAnalyzer()
 //+------------------------------------------------------------------+
 CSignalAnalyzer::~CSignalAnalyzer()
 {
+    if(m_ma_fast_handle != INVALID_HANDLE)
+        IndicatorRelease(m_ma_fast_handle);
+    if(m_ma_slow_handle != INVALID_HANDLE)
+        IndicatorRelease(m_ma_slow_handle);
+}
+
+//+------------------------------------------------------------------+
+//| Enable trend filter with High TF moving averages                    |
+//+------------------------------------------------------------------+
+bool CSignalAnalyzer::EnableTrendFilter(int ma_fast_period = 8, int ma_slow_period = 15)
+{
+    m_ma_fast_period = ma_fast_period;
+    m_ma_slow_period = ma_slow_period;
+    
+    if(!InitializeTrendFilter())
+    {
+        Print("Failed to initialize trend filter");
+        return false;
+    }
+    
+    m_trend_filter_enabled = true;
+    Print("Trend filter enabled with MA(", m_ma_fast_period, ",", m_ma_slow_period, ") on High TF timeframe");
+    return true;
+}
+
+//+------------------------------------------------------------------+
+//| Disable trend filter                                            |
+//+------------------------------------------------------------------+
+void CSignalAnalyzer::DisableTrendFilter()
+{
+    m_trend_filter_enabled = false;
+    m_current_trend = TREND_NEUTRAL;
+    
+    if(m_ma_fast_handle != INVALID_HANDLE)
+    {
+        IndicatorRelease(m_ma_fast_handle);
+        m_ma_fast_handle = INVALID_HANDLE;
+    }
+    
+    if(m_ma_slow_handle != INVALID_HANDLE)
+    {
+        IndicatorRelease(m_ma_slow_handle);
+        m_ma_slow_handle = INVALID_HANDLE;
+    }
+    
+    m_trend_filter_initialized = false;
+    Print("Trend filter disabled");
+}
+
+//+------------------------------------------------------------------+
+//| Initialize trend filter indicators                              |
+//+------------------------------------------------------------------+
+bool CSignalAnalyzer::InitializeTrendFilter(ENUM_TIMEFRAMES high_tf = PERIOD_M30)
+{
+    // Create MA handles for High TF timeframe
+    m_ma_fast_handle = iMA(Symbol(), high_tf, m_ma_fast_period, 0, MODE_EMA, PRICE_CLOSE);
+    if(m_ma_fast_handle == INVALID_HANDLE)
+    {
+        Print("Failed to create fast MA handle for trend filter");
+        return false;
+    }
+    
+    m_ma_slow_handle = iMA(Symbol(),high_tf, m_ma_slow_period, 0, MODE_EMA, PRICE_CLOSE);
+    if(m_ma_slow_handle == INVALID_HANDLE)
+    {
+        Print("Failed to create slow MA handle for trend filter");
+        IndicatorRelease(m_ma_fast_handle);
+        m_ma_fast_handle = INVALID_HANDLE;
+        return false;
+    }
+    
+    // Wait for indicators to initialize
+    Sleep(500);
+    
+    m_trend_filter_initialized = true;
+    return true;
+}
+
+//+------------------------------------------------------------------+
+//| Analyze High TF trend using moving averages                         |
+//+------------------------------------------------------------------+
+ENUM_TREND_DIRECTION CSignalAnalyzer::AnalyzeTrend()
+{
+    if(!m_trend_filter_enabled || !m_trend_filter_initialized)
+        return TREND_NEUTRAL;
+    
+    double ma_fast[3];
+    double ma_slow[3];
+    
+    // Get MA values from High TF timeframe
+    if(CopyBuffer(m_ma_fast_handle, 0, 0, 3, ma_fast) <= 0)
+    {
+        Print("Failed to copy fast MA buffer for trend analysis");
+        return TREND_NEUTRAL;
+    }
+    
+    if(CopyBuffer(m_ma_slow_handle, 0, 0, 3, ma_slow) <= 0)
+    {
+        Print("Failed to copy slow MA buffer for trend analysis");
+        return TREND_NEUTRAL;
+    }
+    
+    // Analyze trend direction
+    // Current values (index 0 is most recent)
+    double ma_fast_curr = ma_fast[0];
+    double ma_slow_curr = ma_slow[0];
+    double ma_fast_prev = ma_fast[2];
+    double ma_slow_prev = ma_slow[2];
+    
+    ENUM_TREND_DIRECTION trend = TREND_NEUTRAL;
+    
+    // Determine trend based on MA position and direction
+    if(ma_fast_curr >= ma_slow_curr && ma_fast_prev >= ma_slow_prev)
+    {
+        // Both current and previous bars show fast MA above slow MA
+        trend = TREND_UP;
+    }
+    else if(ma_fast_curr <= ma_slow_curr && ma_fast_prev <= ma_slow_prev)
+    {
+        // Both current and previous bars show fast MA below slow MA
+        trend = TREND_DOWN;
+    }
+    else
+    {
+        // MAs are crossing or not consistently positioned
+        trend = TREND_NEUTRAL;
+    }
+    return trend;
+    // Additional confirmation: check if MAs are moving in trend direction
+    if(trend == TREND_UP)
+    {
+        if(ma_fast_curr < ma_fast_prev || ma_slow_curr < ma_slow_prev)
+        {
+            // MAs are declining, weaken the trend signal
+            trend = TREND_NEUTRAL;
+        }
+    }
+    else if(trend == TREND_DOWN)
+    {
+        if(ma_fast_curr > ma_fast_prev || ma_slow_curr > ma_slow_prev)
+        {
+            // MAs are rising, weaken the trend signal
+            trend = TREND_NEUTRAL;
+        }
+    }
+    
+    if(m_log_detailed_info)
+    {
+        Print("High TF Trend Analysis - Fast MA: ", DoubleToString(ma_fast_curr, 5), 
+              " Slow MA: ", DoubleToString(ma_slow_curr, 5), 
+              " Trend: ", (trend == TREND_UP ? "UP" : (trend == TREND_DOWN ? "DOWN" : "NEUTRAL")));
+    }
+    
+    return trend;
+}
+
+//+------------------------------------------------------------------+
+//| Check if signal is aligned with trend                           |
+//+------------------------------------------------------------------+
+bool CSignalAnalyzer::IsTrendAligned(ENUM_SIGNAL_TYPE signal_type)
+{
+    if(!m_trend_filter_enabled)
+        return true; // No trend filter, allow all signals
+    
+    ENUM_TREND_DIRECTION current_trend = AnalyzeTrend();
+    m_current_trend = current_trend; // Update stored trend
+    
+    switch(signal_type)
+    {
+        case SIGNAL_BUY_ENTRY:
+            // Buy signals only allowed in uptrend or neutral
+            return (current_trend == TREND_UP || current_trend == TREND_NEUTRAL);
+            
+        case SIGNAL_SELL_ENTRY:
+            // Sell signals only allowed in downtrend or neutral
+            return (current_trend == TREND_DOWN || current_trend == TREND_NEUTRAL);
+            
+        case SIGNAL_BUY_EXIT:
+        case SIGNAL_SELL_EXIT:
+            // Exit signals always allowed regardless of trend
+            return true;
+            
+        default:
+            return true;
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Get trend description string                                    |
+//+------------------------------------------------------------------+
+string CSignalAnalyzer::GetTrendDescription()
+{
+    if(!m_trend_filter_enabled)
+        return "Trend Filter: DISABLED";
+    
+    string trend_text;
+    switch(m_current_trend)
+    {
+        case TREND_UP:
+            trend_text = "UPTREND";
+            break;
+        case TREND_DOWN:
+            trend_text = "DOWNTREND";
+            break;
+        case TREND_NEUTRAL:
+            trend_text = "NEUTRAL";
+            break;
+        default:
+            trend_text = "UNKNOWN";
+    }
+    
+    return StringFormat("High TF Trend: %s (MA%d > MA%d)", trend_text, m_ma_fast_period, m_ma_slow_period);
 }
 
 //+------------------------------------------------------------------+
@@ -135,19 +380,25 @@ CSignalAnalyzer::~CSignalAnalyzer()
 //+------------------------------------------------------------------+
 void CSignalAnalyzer::SetIndicatorData(double macd_main, double macd_signal, double cci, double adx, double rsi)
 {
-    // Store previous values
-    m_macd_main_prev = m_macd_main_curr;
-    m_macd_signal_prev = m_macd_signal_curr;
-    m_cci_prev = m_cci_curr;
-    m_adx_prev = m_adx_curr;
-    m_rsi_prev = m_rsi_curr;
-    
     // Set current values
     m_macd_main_curr = macd_main;
     m_macd_signal_curr = macd_signal;
     m_cci_curr = cci;
     m_adx_curr = adx;
     m_rsi_curr = rsi;
+    m_price_curr  = iClose(_Symbol, PERIOD_CURRENT, 0);
+
+    m_data_ready = false;
+}
+void CSignalAnalyzer::SetPrevIndicatorData(double macd_main, double macd_signal, double cci, double adx, double rsi)
+{
+    // Set current values
+    m_macd_main_prev = macd_main;
+    m_macd_signal_prev = macd_signal;
+    m_cci_prev = cci;
+    m_adx_prev = adx;
+    m_rsi_prev = rsi;
+    m_price_prev  = iClose(_Symbol, PERIOD_CURRENT, 1);
     
     m_data_ready = true;
 }
@@ -212,58 +463,50 @@ ENUM_SIGNAL_TYPE CSignalAnalyzer::AnalyzeSignal()
     if(!m_data_ready)
         return SIGNAL_NONE;
     
-    // Only process signals on new bars to avoid tick noise
-    // if(!IsNewBar())
-    //     return SIGNAL_NONE;
+    ENUM_SIGNAL_TYPE signal = SIGNAL_NONE;
     
-    ENUM_SIGNAL_TYPE current_signal = SIGNAL_NONE;
-    
+    // Check entry signals first
     if(CheckBuyEntryConditions())
-        current_signal = SIGNAL_BUY_ENTRY;
+    {
+        signal = SIGNAL_BUY_ENTRY;
+        // Apply trend filter for entry signals
+        if(!IsTrendAligned(signal))
+        {
+            if(m_log_detailed_info)
+                Print("BUY ENTRY signal filtered out by trend analysis");
+            signal = SIGNAL_NONE;
+        }
+    }
     else if(CheckSellEntryConditions())
-        current_signal = SIGNAL_SELL_ENTRY;
+    {
+        signal = SIGNAL_SELL_ENTRY;
+        // Apply trend filter for entry signals
+        if(!IsTrendAligned(signal))
+        {
+            if(m_log_detailed_info)
+                Print("SELL ENTRY signal filtered out by trend analysis");
+            signal = SIGNAL_NONE;
+        }
+    }
     else if(CheckBuyExitConditions())
-        current_signal = SIGNAL_BUY_EXIT;
+    {
+        signal = SIGNAL_BUY_EXIT;
+        // Exit signals are not filtered by trend
+    }
     else if(CheckSellExitConditions())
-        current_signal = SIGNAL_SELL_EXIT;
-    
-    // Confirm signal stability across multiple bars
-    return CheckSignalStability(current_signal);
-}
-
-bool CSignalAnalyzer::IsNewBar()
-{
-    static datetime last_bar_time = 0;
-    datetime current_bar_time = iTime(Symbol(), PERIOD_CURRENT, 0);
-    
-    if(current_bar_time != last_bar_time)
     {
-        last_bar_time = current_bar_time;
-        return true;
-    }
-    return false;
-}
-
-ENUM_SIGNAL_TYPE CSignalAnalyzer::CheckSignalStability(ENUM_SIGNAL_TYPE signal)
-{
-    if(signal == m_pending_signal)
-    {
-        m_signal_stability_count++;
-    }
-    else
-    {
-        m_pending_signal = signal;
-        m_signal_stability_count = 1;
+        signal = SIGNAL_SELL_EXIT;
+        // Exit signals are not filtered by trend
     }
     
-    // Require signal to be stable for at least 2-3 bars
-    if(m_signal_stability_count >= m_signal_confirmation_bars && signal != SIGNAL_NONE)
+    // Log signal with trend information
+    if(signal != SIGNAL_NONE && m_log_detailed_info)
     {
-        m_signal_stability_count = 0;
-        return signal;
+        Print("Signal Generated: ", GetSignalDescription(signal));
+        Print(GetTrendDescription());
     }
     
-    return SIGNAL_NONE;
+    return signal;
 }
 
 //+------------------------------------------------------------------+
@@ -281,18 +524,23 @@ bool CSignalAnalyzer::CheckBuyEntryConditions()
     // RSI(-2) < RSI(0) &&
     // ADX > 20 && ADX(-2) > ADX(0)
     
-    bool condition1 = m_cci_curr < m_cci_oversold;
+    bool condition1 = m_cci_curr < m_cci_oversold && m_price_prev < m_price_curr;
     bool condition2 = m_macd_signal_curr < 0;
-    bool condition3 = MathAbs(m_macd_main_curr) > m_macd_min_value;
+    bool condition3 = MathAbs(m_macd_main_curr) > m_macd_min_value && m_macd_main_curr > m_macd_main_prev;
     bool condition4 = m_rsi_curr < m_rsi_buy_max;
     bool condition5 = (m_rsi_curr < m_rsi_buy_oversold || m_macd_main_curr > m_macd_signal_curr);
-    bool condition6 = !m_enable_slope_analysis || m_cci_prev < m_cci_curr;
-    bool condition7 = !m_enable_slope_analysis || m_rsi_prev < m_rsi_curr;
-    bool condition8 = m_adx_curr > m_adx_min_strength && (!m_enable_slope_analysis || m_adx_prev > m_adx_curr);
+    bool condition6 = m_cci_prev < m_cci_curr;
+    bool condition7 = m_rsi_prev < m_rsi_curr;
+    bool condition8 = m_adx_curr > m_adx_min_strength && (m_adx_prev > m_adx_curr);
     
-    bool basic_conditions = (condition1 && condition2 && condition3 && condition4 && condition5 && condition6 && condition7 && condition8);
+    if(m_log_detailed_info)
+    {
+        Print("Buy Entry Check - CCI:", condition1, " MACD Signal:", condition2, " MACD Min:", condition3, 
+              " RSI Max:", condition4, " RSI/MACD:", condition5, " CCI Slope:", condition6, 
+              " RSI Slope:", condition7, " ADX:", condition8);
+    }
     
-    return basic_conditions;
+    return condition1 && condition2 && condition3 && condition4 && condition5 && condition6 && condition7 && condition8;
 }
 
 //+------------------------------------------------------------------+
@@ -307,11 +555,11 @@ bool CSignalAnalyzer::CheckBuyExitConditions()
     // CCI(-2) > CCI(0) &&
     // RSI(-2) > RSI(0)
     
-    bool condition1 = m_cci_curr > m_cci_exit_overbought;
-    bool condition2 = m_macd_signal_curr > 0;
+    bool condition1 = m_cci_curr > m_cci_exit_overbought && m_price_prev > m_price_curr;
+    bool condition2 = m_macd_signal_curr > 0 && m_macd_main_curr < m_macd_main_prev;
     bool condition3 = m_rsi_curr > m_rsi_exit_sell_min && (m_rsi_curr > m_rsi_exit_sell_overbought || m_macd_main_curr < m_macd_signal_curr);
-    bool condition4 = !m_enable_slope_analysis || m_cci_prev > m_cci_curr;
-    bool condition5 = !m_enable_slope_analysis || m_rsi_prev > m_rsi_curr;
+    bool condition4 = m_cci_prev > m_cci_curr;
+    bool condition5 = m_rsi_prev > m_rsi_curr;
     
     if(m_log_detailed_info)
     {
@@ -335,14 +583,14 @@ bool CSignalAnalyzer::CheckSellEntryConditions()
     // RSI(-2) > RSI(0) &&
     // ADX > 20 && ADX(-2) < ADX(0)
     
-    bool condition1 = m_cci_curr > m_cci_overbought;
+    bool condition1 = m_cci_curr > m_cci_overbought  && m_price_prev > m_price_curr;
     bool condition2 = m_macd_signal_curr > 0 && MathAbs(m_macd_main_curr) > m_macd_min_value;
-    bool condition3 = MathAbs(m_macd_main_curr) > m_macd_min_value;
+    bool condition3 = MathAbs(m_macd_main_curr) > m_macd_min_value && m_macd_main_curr < m_macd_main_prev;
     bool condition4 = m_rsi_curr > m_rsi_sell_min;
     bool condition5 = (m_rsi_curr > m_rsi_sell_overbought || m_macd_main_curr < m_macd_signal_curr);
-    bool condition6 = !m_enable_slope_analysis || m_cci_prev > m_cci_curr;
-    bool condition7 = !m_enable_slope_analysis || m_rsi_prev > m_rsi_curr;
-    bool condition8 = m_adx_curr > m_adx_min_strength && (!m_enable_slope_analysis || m_adx_prev < m_adx_curr);
+    bool condition6 = m_cci_prev > m_cci_curr;
+    bool condition7 = m_rsi_prev > m_rsi_curr;
+    bool condition8 = m_adx_curr > m_adx_min_strength && (m_adx_prev < m_adx_curr);
  
     if(m_log_detailed_info)
     {
@@ -365,11 +613,11 @@ bool CSignalAnalyzer::CheckSellExitConditions()
     // CCI(-2) < CCI(0) &&
     // RSI(-2) < RSI(0)
     
-    bool condition1 = m_cci_curr < m_cci_exit_oversold;
-    bool condition2 = m_macd_signal_curr < 0;
+    bool condition1 = m_cci_curr < m_cci_exit_oversold  && m_price_prev < m_price_curr;
+    bool condition2 = m_macd_signal_curr < 0 && m_macd_main_curr > m_macd_main_prev;
     bool condition3 = m_rsi_curr < m_rsi_exit_buy_max && (m_rsi_curr < m_rsi_exit_buy_oversold || m_macd_main_curr > m_macd_signal_curr);
-    bool condition4 = !m_enable_slope_analysis || m_cci_prev < m_cci_curr;
-    bool condition5 = !m_enable_slope_analysis || m_rsi_prev < m_rsi_curr;
+    bool condition4 = m_cci_prev < m_cci_curr;
+    bool condition5 = m_rsi_prev < m_rsi_curr;
     
     if(m_log_detailed_info)
     {
@@ -388,11 +636,11 @@ string CSignalAnalyzer::GetSignalDescription(ENUM_SIGNAL_TYPE signal)
     switch(signal)
     {
         case SIGNAL_BUY_ENTRY:
-            return "Buy Entry Signal: Oversold reversal detected";
+            return "Buy Entry Signal: Oversold reversal detected" + (m_trend_filter_enabled ? " (Trend Aligned)" : "");
         case SIGNAL_BUY_EXIT:
             return "Buy Exit Signal: Overbought conditions reached";
         case SIGNAL_SELL_ENTRY:
-            return "Sell Entry Signal: Overbought reversal detected";
+            return "Sell Entry Signal: Overbought reversal detected" + (m_trend_filter_enabled ? " (Trend Aligned)" : "");
         case SIGNAL_SELL_EXIT:
             return "Sell Exit Signal: Oversold conditions reached";
         default:
